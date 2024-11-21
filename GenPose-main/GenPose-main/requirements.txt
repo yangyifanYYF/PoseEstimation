@@ -1,0 +1,4 @@
+opencv-python
+scipy==1.4.1
+numpy==1.23.5
+tensorboardX==2.5.1
