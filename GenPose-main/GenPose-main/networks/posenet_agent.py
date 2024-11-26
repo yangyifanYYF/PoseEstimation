@@ -29,15 +29,15 @@ from utils.metrics import get_metrics, get_rot_matrix
 
  
 def get_ckpt_and_writer_path(cfg):
-        if cfg.use_pretrain and not os.path.exists(f"./results/ckpts/{cfg.log_dir}/ckpt_epoch{cfg.model_name}.pth"):
-            raise Exception(f"./results/ckpts/{cfg.log_dir}/ckpt_epoch{cfg.model_name}.pth is not exist!")
+        if cfg.use_pretrain and not os.path.exists(f"./data/results/ckpts/{cfg.log_dir}/ckpt_epoch{cfg.model_name}.pth"):
+            raise Exception(f"./data/results/ckpts/{cfg.log_dir}/ckpt_epoch{cfg.model_name}.pth is not exist!")
         
         ''' init exp folder and writer '''
-        ckpt_path = f'./results/ckpts/{cfg.log_dir}'
-        writer_path = f'./results/logs/{cfg.log_dir}' if cfg.use_pretrain == False else f'./results/logs/{cfg.log_dir}_continue'
+        ckpt_path = f'./data/results/ckpts/{cfg.log_dir}'
+        writer_path = f'./data/results/logs/{cfg.log_dir}' if cfg.use_pretrain == False else f'./data/results/logs/{cfg.log_dir}_continue'
         
         if cfg.is_train:
-            exists_or_mkdir('./results')
+            exists_or_mkdir('./data/results')
             exists_or_mkdir(ckpt_path)
             exists_or_mkdir(writer_path)    
         return ckpt_path, writer_path    

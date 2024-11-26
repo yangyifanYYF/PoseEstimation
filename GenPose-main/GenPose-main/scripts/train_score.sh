@@ -1,8 +1,9 @@
-CUDA_VISIBLE_DEVICES=1 python /workspace/code/GenPose-main/GenPose-main/runners/trainer.py \
---data_path /workspace/data \
+CUDA_VISIBLE_DEVICES=0 python /workspace/code/GenPose-main/GenPose-main/runners/trainer.py \
+--data_path /workspace/code/data/PoseData \
 --log_dir ScoreNet \
 --agent_type score \
 --sampler_mode ode \
+--batch_size 160 \
 --sampling_steps 500 \
 --eval_freq 1 \
 --n_epochs 1900 \
