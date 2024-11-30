@@ -29,8 +29,8 @@ cfg = get_config()
 
 
 ''' create checkpoint list '''
-scorenet_ckpt_path = f'./results/ckpts/{cfg.score_model_dir}'
-energynet_ckpt_path = f'./results/ckpts/{cfg.energy_model_dir}'
+scorenet_ckpt_path = f'{cfg.score_model_dir}'
+energynet_ckpt_path = f'{cfg.energy_model_dir}'
 
 
 ''' create result dir '''
