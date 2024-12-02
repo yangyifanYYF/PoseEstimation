@@ -22,11 +22,11 @@ class TrainingDataset(Dataset):
         self.sample_num = sample_num
 
         if data_type == 'syn':
-            img_path = 'camera/train_list.txt'
+            img_path = 'CAMERA/train_list.txt'
             model_path = 'obj_models/camera_train.pkl'
             self.intrinsics = [577.5, 577.5, 319.5, 239.5]
         elif data_type == 'real_withLabel':
-            img_path = 'real/train_list.txt'
+            img_path = 'Real/train_list.txt'
             model_path = 'obj_models/real_train.pkl'
             self.intrinsics = [591.0125, 590.16775, 322.525, 244.11084]
         else:
@@ -140,6 +140,7 @@ class TrainingDataset(Dataset):
         model = self.models[gts['model_list'][idx]].astype(np.float32)
         translation = gts['translations'][idx].astype(np.float32)
         rotation = gts['rotations'][idx].astype(np.float32)
+        print(gts.keys())
         size = gts['scales'][idx] * gts['sizes'][idx].astype(np.float32)
 
         # symmetry

@@ -241,7 +241,8 @@ def load_depth(img_path):
 
 def load_composed_depth(img_path):
     """ Load depth image from img_path. """
-    img_path_ = img_path.replace('/data/camera/', '/data/camera_full_depths/')
+    # print('img_path', img_path)
+    img_path_ = img_path.replace('/data/PoseData/CAMERA/', '/data/PoseData/camera_full_depths/')
     depth_path = img_path_ + '_composed.png'
     if os.path.exists(depth_path):
         depth = cv2.imread(depth_path, -1)

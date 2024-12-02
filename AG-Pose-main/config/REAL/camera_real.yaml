@@ -2,7 +2,7 @@ setting: supervised
 
 train_dataset:
   dataset_name: camera_real
-  dataset_dir: ./data
+  dataset_dir: /workspace/code/data/PoseData
   num_mini_batch_per_epoch: 4000
   image_size: 224       # [192, 224]
   sample_num: 1024
