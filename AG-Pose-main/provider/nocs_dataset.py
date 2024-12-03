@@ -140,7 +140,7 @@ class TrainingDataset(Dataset):
         model = self.models[gts['model_list'][idx]].astype(np.float32)
         translation = gts['translations'][idx].astype(np.float32)
         rotation = gts['rotations'][idx].astype(np.float32)
-        print(gts.keys())
+        # print(gts.keys())
         size = gts['scales'][idx] * gts['sizes'][idx].astype(np.float32)
 
         # symmetry

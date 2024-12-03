@@ -5,7 +5,7 @@ CUDA_VISIBLE_DEVICES=0 python /workspace/code/GenPose-main/GenPose-main/runners/
 --sampler_mode ode \
 --batch_size 192 \
 --eval_freq 1 \
---n_epochs 200 \
+--n_epochs 100 \
 --selected_classes bottle bowl camera can laptop mug \
 --percentage_data_for_train 1.0 \
 --percentage_data_for_test 1.0 \

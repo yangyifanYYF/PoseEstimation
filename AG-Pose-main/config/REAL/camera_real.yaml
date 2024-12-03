@@ -18,7 +18,7 @@ train_dataset:
 test_dataset:
   img_size: 224         # [192, 224]
   sample_num: 1024
-  dataset_dir: ./data
+  dataset_dir: /workspace/code/data/PoseData
   dataset_name: real
 
 pose_net:
