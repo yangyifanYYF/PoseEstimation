@@ -202,7 +202,7 @@ class TestDataset():
 
         with open(path, 'rb') as f:
             data = cPickle.load(f)
-        image_path = os.path.join(self.data_dir, data['image_path'][5:])
+        image_path = os.path.join(self.data_dir, 'R'+data['image_path'][6:])
         
         pred_data = data
         pred_mask = data['pred_masks']

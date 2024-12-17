@@ -3,10 +3,10 @@ CUDA_VISIBLE_DEVICES=0 python /workspace/code/GenPose-main/GenPose-main/runners/
 --log_dir ScoreNet \
 --agent_type score \
 --sampler_mode ode \
---batch_size 160 \
+--batch_size 192 \
 --sampling_steps 500 \
 --eval_freq 1 \
---n_epochs 1900 \
+--n_epochs 100 \
 --percentage_data_for_train 1.0 \
 --percentage_data_for_test 1.0 \
 --percentage_data_for_val 1.0 \

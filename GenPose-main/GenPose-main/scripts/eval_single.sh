@@ -1,6 +1,6 @@
 CUDA_VISIBLE_DEVICES=0 python /workspace/code/GenPose-main/GenPose-main/runners/evaluation_single.py \
---score_model_dir /workspace/data/results/ckpts/ScoreNet/ckpt_genpose.pth \
---energy_model_dir /workspace/data/results/ckpts/EnergyNet/ckpt_genpose.pth \
+--score_model_dir /workspace/data/results/ckpts/ScoreNet/ckpt_epoch100.pth \
+--energy_model_dir /workspace/data/results/ckpts/EnergyNet/ckpt_epoch100.pth \
 --data_path /workspace/code/data/PoseData \
 --sampler_mode ode \
 --max_eval_num 1000000 \
