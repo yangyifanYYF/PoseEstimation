@@ -28,6 +28,7 @@ def get_parser():
                         help="gpu num")
     parser.add_argument("--config",
                         type=str,
+                        default='/workspace/code/AG-Pose-main/config/REAL/camera_real.yaml',
                         help="path to config file")
     args_cfg = parser.parse_args()
 

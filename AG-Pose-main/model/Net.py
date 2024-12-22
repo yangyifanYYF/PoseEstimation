@@ -122,7 +122,7 @@ class Loss(nn.Module):
         size_gt = endpoints['size_label']
         
         # pose 
-        loss_pose = PoseDis(endpoints['pred_rotation'], endpoints['pred_translation'], endpoints['pred_size'], rotation_gt, translation_gt, size_gt)
+        loss_pose = PoseDis(endpoints['pred_rotation'], endpoints['pred_translation'], endpoints['pred_size'], rotation_gt, translation_gt, size_gt, endpoints['category_label'], endpoints['mug_handle_visibility'])
         # cd
         loss_cd = self.cd_dis_k2p(pts, pred_kpt_3d)
         # nocs

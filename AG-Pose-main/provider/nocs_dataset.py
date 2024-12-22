@@ -48,6 +48,10 @@ class TrainingDataset(Dataset):
         self.transform = transforms.Compose([transforms.ToTensor(),
                                              transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                                   std=[0.229, 0.224, 0.225])])
+        
+        with open(os.path.join(self.data_dir, 'Real/train/mug_handle.pkl'), 'rb') as f:
+            self.mug_sym = cPickle.load(f)
+            
         print('{} images found.'.format(len(self.img_list)))
         print('{} models loaded.'.format(len(self.models))) 
 
@@ -81,6 +85,17 @@ class TrainingDataset(Dataset):
         # mask
         with open(img_path + '_label.pkl', 'rb') as f:
             gts = cPickle.load(f)
+            
+        # mug handle
+        if self.data_type == 'syn':
+            gts['mug_handle_visibility'] = np.ones_like(gts['class_ids'])
+        else:
+            handle_tmp_path = img_path.split('/')
+            scene_label = handle_tmp_path[-2] + '_res'
+            img_id = int(handle_tmp_path[-1])
+            gts['mug_handle_visibility'] = np.full_like(gts['class_ids'], self.mug_sym[scene_label][img_id])
+        
+            
         num_instance = len(gts['instance_ids'])
         assert(len(gts['class_ids'])==len(gts['instance_ids']))
         mask = cv2.imread(img_path + '_mask.png')[:, :, 2] #480*640
@@ -164,6 +179,7 @@ class TrainingDataset(Dataset):
         ret_dict['rotation_label'] = torch.FloatTensor(rotation)
         ret_dict['size_label'] = torch.FloatTensor(size)
         ret_dict['pc_mask'] = torch.FloatTensor(pc_mask)
+        ret_dict['mug_handle_visibility'] = torch.IntTensor([gts['mug_handle_visibility'][idx]]).long()
         
         return ret_dict
 
