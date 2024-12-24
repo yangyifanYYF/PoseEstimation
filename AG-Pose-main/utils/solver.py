@@ -7,6 +7,11 @@ import gorilla
 import torch
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
+import sys
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(os.path.join(BASE_DIR))
+sys.path.append(os.path.join(BASE_DIR, 'utils'))
+from test import main as evaluate
 
 class Solver(gorilla.solver.BaseSolver):
     def __init__(self, model, loss, dataloaders, logger, cfg, start_epoch=1, start_iter=0):
@@ -49,6 +54,9 @@ class Solver(gorilla.solver.BaseSolver):
                 self.cfg.ckpt_dir, 'epoch_' + str(self.epoch) + '.pt')
             torch.save(self.model.state_dict(), ckpt_path)
             
+            if self.epoch > 10:
+                evaluate(self.epoch, self.model)
+            
             prefix = 'Epoch {} - '.format(self.epoch)
             write_info = self.get_logger_info(prefix, dict_info=dict_info)
             write_info += f"lr: {self.lr_scheduler.get_lr()[0]:.5f}"
@@ -73,7 +81,11 @@ class Solver(gorilla.solver.BaseSolver):
         else:
             raise NotImplementedError
         
+        # ii=0
         for train_data in data_iter:
+            # ii+=1
+            # if ii == 2:
+            #     break
             data_time = time.time()-end
 
             self.optimizer.zero_grad()
@@ -218,65 +230,6 @@ class Solver(gorilla.solver.BaseSolver):
         else:
             assert False
     
-def test_func(model, dataloder, save_path):
-    model.eval()
-    time_all = 0
-    with tqdm(total=len(dataloder)) as t:
-        for i, data in enumerate(dataloder):
-            path = dataloder.dataset.result_pkl_list[i]
-
-            inputs = {
-                'rgb': data['rgb'][0].cuda(),
-                'pts': data['pts'][0].cuda(),
-                'choose': data['choose'][0].cuda(),
-                'category_label': data['category_label'][0].cuda(),
-            }
-            
-            start_time = time.time()
-            end_points = model(inputs)
-            end_time = time.time()
-            elapsed_time = end_time - start_time
-            time_all += elapsed_time
-
-            pred_translation = end_points['pred_translation']
-            pred_size = end_points['pred_size']
-            pred_scale = torch.norm(pred_size, dim=1, keepdim=True)
-            pred_size = pred_size / pred_scale
-            pred_rotation = end_points['pred_rotation']
-
-            num_instance = pred_rotation.size(0)
-            pred_RTs =torch.eye(4).unsqueeze(0).repeat(num_instance, 1, 1).float().to(pred_rotation.device)
-            pred_RTs[:, :3, 3] = pred_translation
-            pred_RTs[:, :3, :3] = pred_rotation * pred_scale.unsqueeze(2)
-            pred_scales = pred_size
-
-            # save
-            result = {}
-
-            result['gt_class_ids'] = data['gt_class_ids'][0].numpy()
-
-            result['gt_bboxes'] = data['gt_bboxes'][0].numpy()
-            result['gt_RTs'] = data['gt_RTs'][0].numpy()
-
-            result['gt_scales'] = data['gt_scales'][0].numpy()
-            result['gt_handle_visibility'] = data['gt_handle_visibility'][0].numpy()
-
-            result['pred_class_ids'] = data['pred_class_ids'][0].numpy()
-            result['pred_bboxes'] = data['pred_bboxes'][0].numpy()
-            result['pred_scores'] = data['pred_scores'][0].numpy()
-
-            result['pred_RTs'] = pred_RTs.detach().cpu().numpy()
-            result['pred_scales'] = pred_scales.detach().cpu().numpy()
-
-            with open(os.path.join(save_path, path.split('/')[-1]), 'wb') as f:
-                cPickle.dump(result, f)
-
-            t.set_description(
-                "Test [{}/{}][{}]: ".format(i+1, len(dataloder), num_instance)
-            )
-
-            t.update(1)
-    print(f"time_all: {time_all}")
             
 class tools_writer():
     def __init__(self, dir_project, num_counter, get_sum):
