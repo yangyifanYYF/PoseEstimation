@@ -158,15 +158,15 @@ class TrainingDataset(Dataset):
         # print(gts.keys())
         size = gts['scales'][idx] * gts['sizes'][idx].astype(np.float32)
 
-        # symmetry
-        if cat_id in self.sym_ids:
-            theta_x = rotation[0, 0] + rotation[2, 2]
-            theta_y = rotation[0, 2] - rotation[2, 0]
-            r_norm = math.sqrt(theta_x**2 + theta_y**2)
-            s_map = np.array([[theta_x/r_norm, 0.0, -theta_y/r_norm],
-                                [0.0,            1.0,  0.0           ],
-                                [theta_y/r_norm, 0.0,  theta_x/r_norm]])
-            rotation = rotation @ s_map
+        # # symmetry
+        # if cat_id in self.sym_ids:
+        #     theta_x = rotation[0, 0] + rotation[2, 2]
+        #     theta_y = rotation[0, 2] - rotation[2, 0]
+        #     r_norm = math.sqrt(theta_x**2 + theta_y**2)
+        #     s_map = np.array([[theta_x/r_norm, 0.0, -theta_y/r_norm],
+        #                         [0.0,            1.0,  0.0           ],
+        #                         [theta_y/r_norm, 0.0,  theta_x/r_norm]])
+        #     rotation = rotation @ s_map
             
         qo = (pts - translation[np.newaxis, :]) / (np.linalg.norm(size)+1e-8) @ rotation
         dis = np.linalg.norm(qo[:, np.newaxis, :] - model[np.newaxis, :, :], axis=2)

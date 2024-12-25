@@ -1,3 +1,6 @@
 results/
 data/
 AG-Pose-main/model/__pycache__/
+AG-Pose-main/utils/__pycache__/
+AG-Pose-main/provider/__pycache__/
+AG-Pose-main/__pycache__/
