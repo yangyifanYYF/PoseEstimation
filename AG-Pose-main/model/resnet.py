@@ -207,9 +207,7 @@ def resnet18(pretrained=False):
     if pretrained:
         print("loading pretrained mdl.")
         model.load_state_dict(
-            model_zoo.load_url(
-                model_urls['resnet18'], model_dir=resnet_ptr_mdl_p
-            )
+            torch.load('/workspace/code/AG-Pose-main/model/resnet18-5c106cde.pth')
         )
     return model
 
