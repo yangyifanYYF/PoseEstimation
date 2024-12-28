@@ -187,7 +187,7 @@ class LGAttnBlock(nn.Module):
                                    key=knn_combined,
                                    value=knn_combined
                                   )
-        kpt_combined = kpt_combined1 + self.dropout1(output) # (b, kpt_num*k, 2c)
+        kpt_combined = kpt_combined + self.dropout1(output) # (b, kpt_num*k, 2c)
         kpt_combined = kpt_combined.view(-1, kpt_num, k * cc)  # (b, kpt_num, k * 2c)
         kpt_combined = self.fc(kpt_combined) # (b, kpt_num, 2c)
         
@@ -503,9 +503,7 @@ class AttnLayer(nn.Module):
         Returns:
             batch_kpt_query: b, kpt_num, dim
             attn:  b, kpt_num, n
-        """    
-        input_feature = input_feature.transpose(1, 2) # (b, n, 2c)
-        
+        """     
         # (b, kpt_num, c)  (b, kpt_num, n)
         for i in range(self.block_num):
             batch_kpt_query, attn = self.attn_blocks[i](batch_kpt_query, input_feature)
@@ -601,7 +599,7 @@ class InstanceAdaptiveKeypointDetector(nn.Module):
         
         batch_kpt_query = self.kpt_query.unsqueeze(0).repeat(b, 1, 1)
         # (b, kpt_num, 2c)  (b, kpt_num, n)
-        batch_kpt_query, attn = self.attn_layer(batch_kpt_query, input_feature) 
+        batch_kpt_query, attn = self.attn_layer(batch_kpt_query, fused_feature) 
         
         # cos similarity <a, b> / |a|*|b|
         norm1 = torch.norm(batch_kpt_query, p=2, dim=2, keepdim=True) 
