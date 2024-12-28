@@ -4,12 +4,14 @@ import torch.nn.functional as F
 from model.losses import ChamferDis, PoseDis, SmoothL1Dis, ChamferDis_wo_Batch
 from utils.data_utils import generate_augmentation
 from model.modules import ModifiedResnet, PointNet2MSG
-from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor
+from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor, LocalGlobal, FeatureFusion
 
 class Net(nn.Module):
     def __init__(self, cfg):
         super(Net, self).__init__()
         self.cat_num = cfg.cat_num
+        self.fuse_type = cfg.fuse_type
+        self.last_module = cfg.last_module
         self.cfg = cfg
         if cfg.rgb_backbone == "resnet":
             self.rgb_extractor = ModifiedResnet()
@@ -34,6 +36,8 @@ class Net(nn.Module):
         self.estimator = PoseSizeEstimator()
 
         self.reconstructor = Reconstructor(cfg.Reconstructor)
+        self.LocalGlobal = LocalGlobal(cfg.LG)
+        self.FeatureFusion = FeatureFusion(cfg.FF)
         
         
     def forward(self, inputs):
@@ -74,10 +78,21 @@ class Net(nn.Module):
             pts = (pts - delta_t) / delta_s.unsqueeze(2) @ delta_r
 
         pts_local = self.pts_extractor(pts) # b, c, n
-        batch_kpt_query, heat_map = self.IAKD(rgb_local, pts_local)
-        kpt_3d = torch.bmm(heat_map, pts)
-        kpt_feature = torch.bmm(heat_map, torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2))
-        kpt_feature = self.GAFA(kpt_feature, kpt_3d.detach(), torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2), pts)
+        
+        if self.fuse_type == 'concat':
+            fused_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2) # (b, n, 2c)
+        elif self.fuse_type == 'self_attn':
+            fused_feature = self.FeatureFusion(rgb_local, pts_local) # (b, n, 2c)
+        
+        batch_kpt_query, heat_map = self.IAKD(fused_feature)
+        kpt_3d = torch.bmm(heat_map, pts) 
+        kpt_feature = torch.bmm(heat_map, fused_feature)
+        
+        if self.last_module == 'LG':
+            kpt_feature = self.LocalGlobal(kpt_feature, kpt_3d.detach(), fused_feature, pts)
+        elif self.last_module == 'GAFA':
+            kpt_feature = self.GAFA(kpt_feature, kpt_3d.detach(), fused_feature, pts)
+
         recon_model, recon_delta = self.reconstructor(kpt_3d.transpose(1, 2), kpt_feature.transpose(1, 2))
         kpt_nocs = self.nocs_predictor(kpt_feature, index)
         r, t, s = self.estimator(kpt_3d, kpt_nocs.detach(), kpt_feature)

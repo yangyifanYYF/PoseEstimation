@@ -9,7 +9,7 @@ train_dataset:
   outlier_th: 0.1
   syn_bs: 30
   real_bs: 10
-  syn_num_workers: 12
+  syn_num_workers: 16
   real_num_workers: 4
   shuffle: True
   drop_last: True
@@ -23,7 +23,15 @@ test_dataset:
 
 pose_net:
   rgb_backbone: dino    # [resnet, dino]
+  fuse_type: self_attn    # [self_attn, concat]
+  last_module: GAFA          # [LG, GAFA]
   cat_num: 6
+  FF:
+    AttnLayer:
+      block_num: 4
+      d_model: 256
+      dim_ffn: 256
+      num_head: 4
   IAKD:
     kpt_num: 96
     query_dim: 256
@@ -36,6 +44,14 @@ pose_net:
     block_num: 2
     K: [16, 32]
     d_model: 256
+  LG:
+    K: 16
+    d_model: 256
+    AttnLayer:
+      block_num: 2
+      d_model: 256
+      dim_ffn: 256
+      num_head: 4
   NOCS_Predictor:
     cat_num: 6
     bins_num: 64
@@ -62,7 +78,7 @@ lr_scheduler:
   step_size_down: 20000
   cycle_momentum: False
 
-max_epoch : 30
+max_epoch : 40
 
 loss:
   cd: 2.0
