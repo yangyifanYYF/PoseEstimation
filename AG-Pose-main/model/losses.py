@@ -35,23 +35,24 @@ def ChamferDis_wo_Batch(p1, p2):
     dis = 0.5*dis1.mean() + 0.5*dis2.mean()
     return dis
 
-def PoseDis(r1, t1, s1, r2, t2, s2, category_label, mug_handle_visibility):
+def PoseDis(sym, r1, t1, s1, r2, t2, s2, category_label, mug_handle_visibility):
     '''
     r1, r2: b*3*3
     t1, t2: b*3
     s1, s2: b*3
     '''
     
-    # Remove redundant dimensions from category_label
-    category_label = category_label.squeeze(-1)  # Shape: (b,)
-    mug_handle_visibility = mug_handle_visibility.squeeze(-1)  # Shape: (b,)
+    if sym:
+        # Remove redundant dimensions from category_label
+        category_label = category_label.squeeze(-1)  # Shape: (b,)
+        mug_handle_visibility = mug_handle_visibility.squeeze(-1)  # Shape: (b,)
 
-    # Symmetry adjustment for specific categories
-    symmetric_mask = (category_label == 0) | (category_label == 1) | (category_label == 3) | ((category_label == 5) & (mug_handle_visibility == 0))
-    if symmetric_mask.any():
-        y_axis = torch.tensor([0, 1, 0], device=r1.device, dtype=r1.dtype).view(1, 3, 1)
-        r1[symmetric_mask] = r1[symmetric_mask] @ y_axis
-        r2[symmetric_mask] = r2[symmetric_mask] @ y_axis
+        # Symmetry adjustment for specific categories
+        symmetric_mask = (category_label == 0) | (category_label == 1) | (category_label == 3) | ((category_label == 5) & (mug_handle_visibility == 0))
+        if symmetric_mask.any():
+            y_axis = torch.tensor([0, 1, 0], device=r1.device, dtype=r1.dtype).view(1, 3, 1)
+            r1[symmetric_mask] = r1[symmetric_mask] @ y_axis
+            r2[symmetric_mask] = r2[symmetric_mask] @ y_axis
      
     dis_r = torch.mean(torch.norm(r1 - r2, dim=1))
     dis_t = torch.mean(torch.norm(t1 - t2, dim=1))
