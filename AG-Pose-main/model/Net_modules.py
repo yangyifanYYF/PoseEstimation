@@ -74,34 +74,9 @@ class Reconstructor(nn.Module):
 class LocalGlobal(nn.Module):
     def __init__(self, cfg):
         super(LocalGlobal, self).__init__()
-        self.K = cfg.K
         self.d_model = cfg.d_model
         # build attention layer
         self.attn_layer = LGAttnLayer(cfg.AttnLayer)
-        self.fc_delta1 = nn.Sequential(
-            nn.Linear(cfg.d_model*2, cfg.d_model),
-            nn.ReLU(),
-            nn.Linear(cfg.d_model, cfg.d_model)
-        )
-        self.fc_delta2 = nn.Sequential(
-            nn.Linear(cfg.d_model*2, cfg.d_model),
-            nn.ReLU(),
-            nn.Linear(cfg.d_model, cfg.d_model)
-        )
-        self.fc_delta_3 = nn.Sequential(
-            nn.Linear(3, 64),
-            nn.ReLU(),
-            nn.Linear(64, cfg.d_model),
-            nn.ReLU(),
-            nn.Linear(cfg.d_model, cfg.d_model),
-        )
-        self.fc_delta_4 = nn.Sequential(
-            nn.Linear(3, 64),
-            nn.ReLU(),
-            nn.Linear(64, cfg.d_model),
-            nn.ReLU(),
-            nn.Linear(cfg.d_model, cfg.d_model),
-        )
     
     def forward(self, kpt_feature, kpt_3d, obj_feature, pts):
         """_summary_
@@ -116,30 +91,16 @@ class LocalGlobal(nn.Module):
             kpt_feature: (b, kpt_num, 2c)
         """
 
-        # (b, kpt_num, 1, 3) - (b, 1, n, 3) = (b, kpt_num, n, 3)     
-        dis_mat = torch.norm(kpt_3d.unsqueeze(2) - pts.unsqueeze(1), dim=3)
-        knn_idx = dis_mat.argsort()[:, :, :self.K]
-        knn_xyz = index_points(pts, knn_idx) # # (b, kpt_num, k, 3) 
-        knn_feature = index_points(obj_feature, knn_idx)  # (b, kpt_num, k, 2c)
-        
-        kpt_3d = self.fc_delta_3(kpt_3d) # (b, kpt_num, 2c)
-        knn_xyz = self.fc_delta_4(knn_xyz) # (b, kpt_num, k, 2c)
-        
-        kpt_combined = torch.cat([kpt_feature, kpt_3d], dim=-1) # (b, kpt_num, 4c)
-        knn_combined = torch.cat([knn_feature, knn_xyz], dim=-1) # (b, kpt_num, k, 4c)
-        kpt_combined = self.fc_delta1(kpt_combined)
-        knn_combined = self.fc_delta2(knn_combined)
-        output = self.attn_layer(kpt_feature, kpt_combined, obj_feature, knn_combined)
-        
-        
-        
+        output = self.attn_layer(kpt_feature, kpt_3d, obj_feature, pts)
+     
         return output
 
 class LGAttnBlock(nn.Module):
-    def __init__(self, d_model=256, num_heads=4, dim_ffn=256, dropout=0.0, dropout_attn=None):
+    def __init__(self, d_model=256, num_heads=4, dim_ffn=256, dropout=0.0, dropout_attn=None, K=16):
         super(LGAttnBlock, self).__init__()
         if dropout_attn is None:
             dropout_attn = dropout
+        self.K = K
         self.multihead_attn = nn.MultiheadAttention(d_model, num_heads, dropout=dropout, batch_first=True)
         self.self_attn = nn.MultiheadAttention(d_model, num_heads, dropout=dropout, batch_first=True)
         self.norm1 = nn.LayerNorm(d_model)
@@ -152,7 +113,7 @@ class LGAttnBlock(nn.Module):
                                  nn.ReLU(), nn.Dropout(dropout, inplace=False),
                                  nn.Linear(dim_ffn, d_model))
         self.fuse_mlp = nn.Sequential(
-            nn.Linear(2*d_model, d_model),
+            nn.Linear(3*d_model, d_model),
             nn.ReLU(),
             nn.Linear(d_model, d_model)
         )
@@ -161,20 +122,73 @@ class LGAttnBlock(nn.Module):
             nn.ReLU(),
             nn.Linear(d_model, d_model)
         )
+        self.fc_delta1 = nn.Sequential(
+            nn.Linear(d_model*2, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model)
+        )
+        self.fc_delta2 = nn.Sequential(
+            nn.Linear(d_model*2, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model)
+        )
+        self.fc_delta_3 = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.ReLU(),
+            nn.Linear(64, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.fc_delta_4 = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.ReLU(),
+            nn.Linear(64, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.fc_delta_5 = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.ReLU(),
+            nn.Linear(64, d_model),
+            nn.ReLU(),
+            nn.Linear(d_model, d_model),
+        )
         
     def with_pos_embed(self, tensor, pos=None):
         return tensor if pos is None else tensor + pos
     
     
-    def forward(self, kpt_feature, kpt_combined, obj_feature, knn_combined):
+    def forward(self, kpt_feature, kpt_3d, obj_feature, pts):
         """_summary_
 
         Args:
             kpt_feature (_type_): (b, kpt_num, 2c)
-            kpt_combined (_type_): (b, kpt_num, 2c)
+            kpt_3d (_type_): (b, kpt_num, 3)
             obj_feature (_type_): (b, n, 2c)
-            knn_combined (_type_): (b, kpt_num, k, 2c)
+            pts (_type_): (b, n, 3)
         """
+        
+        # (b, kpt_num, 1, 3) - (b, 1, n, 3) = (b, kpt_num, n, 3)     
+        dis_mat = torch.norm(kpt_3d.unsqueeze(2) - pts.unsqueeze(1), dim=3)
+        knn_idx = dis_mat.argsort()[:, :, :self.K]
+        knn_xyz = index_points(pts, knn_idx) # # (b, kpt_num, k, 3) 
+        knn_feature = index_points(obj_feature, knn_idx)  # (b, kpt_num, k, 2c)
+        
+        # 求kpt相对于物体中心点的相对位置
+        kpt_relative = kpt_3d - pts.mean(dim=1, keepdim=True) # (b, kpt_num, 3)
+        # 求knn相对于对应关键点的相对位置
+        knn_relative = knn_xyz - kpt_3d.unsqueeze(2) # (b, kpt_num, k, 3)
+        
+        pos_enc1 = self.fc_delta_3(kpt_relative) # (b, kpt_num, 2c)
+        pos_enc2 = self.fc_delta_4(knn_relative) # (b, kpt_num, k, 2c)
+        pos_enc3 = self.fc_delta_5(kpt_3d) # (b, kpt_num, 2c)
+        
+        kpt_combined = torch.cat([kpt_feature, pos_enc1], dim=-1) # (b, kpt_num, 4c)
+        knn_combined = torch.cat([knn_feature, pos_enc2], dim=-1) # (b, kpt_num, k, 4c)
+        kpt_combined = self.fc_delta1(kpt_combined) # (b, kpt_num, 2c)
+        knn_combined = self.fc_delta2(knn_combined) # (b, kpt_num, k, 2c)
+        
+        
         kpt_num = kpt_combined.shape[1]
         k = knn_combined.shape[2]
         cc = kpt_combined.shape[-1]
@@ -195,7 +209,7 @@ class LGAttnBlock(nn.Module):
         # 对 kpt_combined 进行平均池化并广播，得到全局特征
         kpt_global = torch.mean(kpt_combined, dim=1)  # (b, 2c)
         kpt_global = kpt_global.unsqueeze(1).expand(-1, kpt_num, -1)  # (b, kpt_num, 2c)
-        input = self.fuse_mlp(torch.cat([kpt_combined, kpt_global], dim=-1)) # (b, kpt_num, 2c)
+        input = self.fuse_mlp(torch.cat([kpt_combined, kpt_global, pos_enc3], dim=-1)) # (b, kpt_num, 2c)
         input1 = self.norm2(input)
         output, _ = self.self_attn(input1, 
                                                input1, 
@@ -217,18 +231,19 @@ class LGAttnLayer(nn.Module):
         self.d_model = cfg.d_model
         self.num_head = cfg.num_head
         self.dim_ffn = cfg.dim_ffn
+        self.K = cfg.K
         
         # build attention blocks
         self.attn_blocks = nn.ModuleList()
         for i in range(self.block_num):
-            self.attn_blocks.append(LGAttnBlock(d_model=self.d_model, num_heads=self.num_head, dim_ffn=self.dim_ffn, dropout=0.0, dropout_attn=None))
+            self.attn_blocks.append(LGAttnBlock(d_model=self.d_model, num_heads=self.num_head, dim_ffn=self.dim_ffn, dropout=0.0, dropout_attn=None, K = self.K))
 
         
-    def forward(self, kpt_feature, kpt_combined, obj_feature, knn_combined):
+    def forward(self, kpt_feature, kpt_3d, obj_feature, pts):
 
         
         for i in range(self.block_num):
-            kpt_feature = self.attn_blocks[i](kpt_feature, kpt_combined, obj_feature, knn_combined)
+            kpt_feature = self.attn_blocks[i](kpt_feature, kpt_3d, obj_feature, pts)
         
         return kpt_feature
 

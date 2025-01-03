@@ -7,6 +7,45 @@ import collections
 import math
 import numpy as np
 
+# 计算点集之间的欧几里得距离
+def compute_distances(points):
+    n = len(points)
+    distances = np.zeros((n, n))
+    for i in range(n):
+        for j in range(i + 1, n):
+            dist = np.linalg.norm(points[i] - points[j])
+            distances[i, j] = dist
+            distances[j, i] = dist
+    return distances
+
+# 最远点采样
+def farthest_point_sampling(points, sample_num):
+    n = len(points)
+    selected_points = []
+    
+    # 从随机点开始
+    first_point_idx = np.random.randint(n)
+    selected_points.append(first_point_idx)
+    
+    # 计算每个点到已选择点集合的最小距离
+    distances = np.zeros(n)
+    for i in range(n):
+        distances[i] = np.linalg.norm(points[i] - points[first_point_idx])
+    
+    for _ in range(1, sample_num):
+        # 找到距离当前已选择点集合最远的点
+        farthest_point_idx = np.argmax(distances)
+        selected_points.append(farthest_point_idx)
+        
+        # 更新每个点到已选择点集合的最小距离
+        new_distances = np.zeros(n)
+        for i in range(n):
+            new_distances[i] = min(distances[i], np.linalg.norm(points[i] - points[farthest_point_idx]))
+        
+        distances = new_distances
+    
+    return selected_points
+
 def generate_augmentation(batchsize):
     delta_t = torch.rand(batchsize, 1, 3).cuda()
     delta_t = delta_t.uniform_(-0.02, 0.02)

@@ -85,7 +85,7 @@ if __name__ == "__main__":
     loss = Loss(cfg.loss).cuda()
     
     # dataloader
-    dataloaders = create_dataloaders(cfg.train_dataset)
+    dataloaders = create_dataloaders(cfg.train_dataset, cfg.loss.sym)
 
     for k in dataloaders.keys():
         dataloaders[k].dataset.reset()

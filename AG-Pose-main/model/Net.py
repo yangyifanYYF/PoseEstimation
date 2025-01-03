@@ -137,7 +137,7 @@ class Loss(nn.Module):
         size_gt = endpoints['size_label']
         
         # pose 
-        loss_pose = PoseDis(endpoints['pred_rotation'], endpoints['pred_translation'], endpoints['pred_size'], rotation_gt, translation_gt, size_gt, endpoints['category_label'], endpoints['mug_handle_visibility'])
+        loss_pose = PoseDis(self.cfg.sym, endpoints['pred_rotation'], endpoints['pred_translation'], endpoints['pred_size'], rotation_gt, translation_gt, size_gt, endpoints['category_label'], endpoints['mug_handle_visibility'])
         # cd
         loss_cd = self.cd_dis_k2p(pts, pred_kpt_3d)
         # nocs
@@ -154,17 +154,70 @@ class Loss(nn.Module):
         # regularization 
         loss_delta = recon_delta.norm(dim=2).mean()
         
-        loss_all = self.cfg.pose*loss_pose + self.cfg.nocs*loss_nocs + self.cfg.cd*loss_cd + \
-            self.cfg.diversity*loss_diversity + self.cfg.recon*loss_recon + self.cfg.delta*loss_delta
-        return {
-            'loss_all': loss_all,
-            'loss_pose': self.cfg.pose*loss_pose,
-            'loss_nocs': self.cfg.nocs*loss_nocs,
-            'loss_cd': self.cfg.cd*loss_cd,
-            'loss_diversity': self.cfg.diversity*loss_diversity,
-            'loss_recon': self.cfg.recon*loss_recon,
-            'loss_delta': self.cfg.delta*loss_delta,
-        }
+        # 尝试帕累托优化
+        if self.cfg.Pareto:
+            # 计算每个损失的梯度
+            loss_list = [loss_pose, loss_nocs, loss_cd, loss_diversity, loss_recon, loss_delta]
+            gradients = []
+            for loss in loss_list:
+                loss.backward(retain_graph=True)  # 计算每个损失的梯度
+                # 只保存非空梯度的副本
+                gradients.append([param.grad.clone() for param in self.parameters() if param.grad is not None])
+
+            # 确保梯度列表不为空，并计算每个目标函数的总范数
+            grad_norms = []
+            for grad in gradients:
+                # 过滤掉空梯度列表
+                non_empty_grads = [g for g in grad if g is not None]
+                if non_empty_grads:  # 只有在梯度非空时才计算范数
+                    grad_norm = torch.sqrt(torch.sum(torch.stack([torch.norm(grad_param)**2 for grad_param in non_empty_grads]))).item()
+                    grad_norms.append(grad_norm)
+                else:
+                    grad_norms.append(0.0)  # 如果梯度为空，设置范数为0
+
+            # 计算目标函数梯度之间的内积，用于平衡各个目标
+            grad_inner_product = torch.zeros(len(grad_norms), len(grad_norms))  # 用于保存梯度的内积
+            for i in range(len(grad_norms)):
+                for j in range(i, len(grad_norms)):
+                    # 检查梯度是否存在
+                    if len(gradients[i]) > 0 and len(gradients[j]) > 0:  # 确保每个梯度列表有元素
+                        grad_inner_product[i, j] = torch.sum(gradients[i][0] * gradients[j][0]).item()  # 计算梯度内积
+
+            # 计算MGDA权重（基于梯度内积）
+            grad_inner_product_inv = torch.inverse(grad_inner_product + 1e-6 * torch.eye(len(grad_inner_product)))  # 计算梯度内积的逆
+            mgda_weights = torch.matmul(grad_inner_product_inv, torch.ones(len(grad_inner_product), 1))  # 求得每个目标的权重
+
+            # 归一化权重
+            mgda_weights = mgda_weights / torch.sum(mgda_weights)
+            mgda_weights = mgda_weights.squeeze().tolist()
+
+            # 计算总损失
+            loss_all = sum(mgda_weights[i] * loss_list[i] for i in range(len(loss_list)))
+
+            return {
+                'loss_all': loss_all,
+                'loss_pose': mgda_weights[0] * loss_pose,
+                'loss_nocs': mgda_weights[1] * loss_nocs,
+                'loss_cd': mgda_weights[2] * loss_cd,
+                'loss_diversity': mgda_weights[3] * loss_diversity,
+                'loss_recon': mgda_weights[4] * loss_recon,
+                'loss_delta': mgda_weights[5] * loss_delta,
+            }
+
+
+
+        else:
+            loss_all = self.cfg.pose*loss_pose + self.cfg.nocs*loss_nocs + self.cfg.cd*loss_cd + \
+                self.cfg.diversity*loss_diversity + self.cfg.recon*loss_recon + self.cfg.delta*loss_delta
+            return {
+                'loss_all': loss_all,
+                'loss_pose': self.cfg.pose*loss_pose,
+                'loss_nocs': self.cfg.nocs*loss_nocs,
+                'loss_cd': self.cfg.cd*loss_cd,
+                'loss_diversity': self.cfg.diversity*loss_diversity,
+                'loss_recon': self.cfg.recon*loss_recon,
+                'loss_delta': self.cfg.delta*loss_delta,
+            }
         
     def ChamferDis_with_mask(self, pts, recon_model, pc_mask):
         """
