@@ -13,13 +13,15 @@ from torch.utils.data import Dataset
 from utils.data_utils import fill_missing, get_bbox, load_composed_depth, load_depth, rgb_add_noise
 
 class TrainingDataset(Dataset):
-    def __init__(self, image_size, sample_num, data_dir, data_type='real', num_img_per_epoch=-1, threshold=0.2):
+    def __init__(self, image_size, sample_num, data_dir, data_type='real', num_img_per_epoch=-1, threshold=0.2, sym=False, cfg=None):
+        self.sym = sym
         self.data_dir = data_dir
         self.data_type = data_type
         self.threshold = threshold
         self.num_img_per_epoch = num_img_per_epoch
         self.img_size = image_size
         self.sample_num = sample_num
+        self.cfg = cfg
 
         if data_type == 'syn':
             img_path = 'CAMERA/train_list.txt'
@@ -158,16 +160,17 @@ class TrainingDataset(Dataset):
         # print(gts.keys())
         size = gts['scales'][idx] * gts['sizes'][idx].astype(np.float32)
 
-        # # symmetry
-        # if cat_id in self.sym_ids:
-        #     theta_x = rotation[0, 0] + rotation[2, 2]
-        #     theta_y = rotation[0, 2] - rotation[2, 0]
-        #     r_norm = math.sqrt(theta_x**2 + theta_y**2)
-        #     s_map = np.array([[theta_x/r_norm, 0.0, -theta_y/r_norm],
-        #                         [0.0,            1.0,  0.0           ],
-        #                         [theta_y/r_norm, 0.0,  theta_x/r_norm]])
-        #     rotation = rotation @ s_map
-            
+        if not self.sym:
+            # symmetry
+            if cat_id in self.sym_ids:
+                theta_x = rotation[0, 0] + rotation[2, 2]
+                theta_y = rotation[0, 2] - rotation[2, 0]
+                r_norm = math.sqrt(theta_x**2 + theta_y**2)
+                s_map = np.array([[theta_x/r_norm, 0.0, -theta_y/r_norm],
+                                    [0.0,            1.0,  0.0           ],
+                                    [theta_y/r_norm, 0.0,  theta_x/r_norm]])
+                rotation = rotation @ s_map
+                
         qo = (pts - translation[np.newaxis, :]) / (np.linalg.norm(size)+1e-8) @ rotation
         dis = np.linalg.norm(qo[:, np.newaxis, :] - model[np.newaxis, :, :], axis=2)
         pc_mask = np.min(dis, axis=1)
