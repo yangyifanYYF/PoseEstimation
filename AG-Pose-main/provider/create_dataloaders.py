@@ -2,14 +2,14 @@ from nocs_dataset import TrainingDataset
 from housecat6d_dataset import HouseCat6DTrainingDataset
 import torch
 
-def create_dataloaders(cfg):
+def create_dataloaders(cfg, sym):
     data_dir = cfg.dataset_dir
     data_loader = {}
 
     if cfg.dataset_name == "camera_real":
         syn_dataset = TrainingDataset(
             cfg.image_size, cfg.sample_num, data_dir, 'syn',
-            num_img_per_epoch=cfg.num_mini_batch_per_epoch*cfg.syn_bs, threshold=cfg.outlier_th)
+            num_img_per_epoch=cfg.num_mini_batch_per_epoch*cfg.syn_bs, threshold=cfg.outlier_th, sym = sym, cfg=cfg)
             
         syn_dataloader = torch.utils.data.DataLoader(syn_dataset,
             batch_size=cfg.syn_bs,
@@ -21,7 +21,7 @@ def create_dataloaders(cfg):
             
         real_dataset = TrainingDataset(
             cfg.image_size, cfg.sample_num, data_dir, 'real_withLabel',
-            num_img_per_epoch=cfg.num_mini_batch_per_epoch*cfg.real_bs, threshold=cfg.outlier_th)
+            num_img_per_epoch=cfg.num_mini_batch_per_epoch*cfg.real_bs, threshold=cfg.outlier_th, sym = sym, cfg=cfg)
             
         real_dataloader = torch.utils.data.DataLoader(real_dataset,
             batch_size=cfg.real_bs,
@@ -37,7 +37,7 @@ def create_dataloaders(cfg):
     elif cfg.dataset_name == "camera":
         syn_dataset = TrainingDataset(
             cfg.image_size, cfg.sample_num, data_dir, 'syn',
-            num_img_per_epoch=cfg.num_mini_batch_per_epoch*cfg.syn_bs, threshold=cfg.outlier_th)
+            num_img_per_epoch=cfg.num_mini_batch_per_epoch*cfg.syn_bs, threshold=cfg.outlier_th, sym = sym, cfg=cfg)
             
         syn_dataloader = torch.utils.data.DataLoader(syn_dataset,
             batch_size=cfg.syn_bs,

@@ -51,7 +51,7 @@ def get_parser():
     args_cfg = parser.parse_args()
     return args_cfg
 
-def init(epoch):
+def init(epoch, dataset_name):
     args = get_parser()
     exp_name = args.config.split("/")[-1].split(".")[0]
     log_dir = os.path.join("log", exp_name)
@@ -66,9 +66,11 @@ def init(epoch):
     cfg.mask_label = args.mask_label
     cfg.only_eval = args.only_eval
     cfg.cat_id = args.cat_id
+    if dataset_name:
+        cfg.test_dataset.dataset_name = dataset_name
 
     gorilla.utils.set_cuda_visible_devices(gpu_ids = cfg.gpus)
-    logger = get_logger(level_print=logging.INFO, level_save=logging.WARNING, path_file=log_dir+"/test_epoch" + str(cfg.test_epoch)  + "_logger.log")
+    logger = get_logger(level_print=logging.INFO, level_save=logging.WARNING, path_file=log_dir+"/test_epoch" + str(cfg.test_epoch) + '_' + str(cfg.test_dataset.dataset_name)  + "_logger.log")
 
     return logger, cfg
 
@@ -149,8 +151,8 @@ def get_logger(level_print, level_save, path_file, name_logger = "logger"):
     logger.addHandler(handler_view)
     return logger
 
-def main(epoch=30, model=None):
-    logger, cfg = init(epoch)
+def main(epoch=11, model=None, dataset_name=None):
+    logger, cfg = init(epoch, dataset_name)
 
     logger.warning("************************ Start Logging ************************")
     logger.info(cfg)
@@ -160,7 +162,7 @@ def main(epoch=30, model=None):
     torch.manual_seed(cfg.rd_seed)
 
     if cfg.setting == 'supervised':
-        save_path = os.path.join(cfg.log_dir, 'eval_epoch' + str(cfg.test_epoch))
+        save_path = os.path.join(cfg.log_dir, 'eval_epoch_' + str(cfg.test_dataset.dataset_name) + str(cfg.test_epoch))
         setting = 'supervised'
     else:
         if cfg.mask_label:

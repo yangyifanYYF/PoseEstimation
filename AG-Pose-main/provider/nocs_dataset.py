@@ -221,7 +221,10 @@ class TestDataset():
 
         with open(path, 'rb') as f:
             data = cPickle.load(f)
-        image_path = os.path.join(self.data_dir, 'R'+data['image_path'][6:])
+        if self.dataset_name == 'real':
+            image_path = os.path.join(self.data_dir, 'R'+data['image_path'][6:])
+        else:
+            image_path = os.path.join(self.data_dir, 'CAMERA/'+data['image_path'][12:])
         
         pred_data = data
         pred_mask = data['pred_masks']

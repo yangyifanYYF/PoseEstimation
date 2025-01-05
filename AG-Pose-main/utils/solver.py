@@ -55,7 +55,8 @@ class Solver(gorilla.solver.BaseSolver):
             torch.save(self.model.state_dict(), ckpt_path)
             
             if self.epoch > 10:
-                evaluate(self.epoch, self.model)
+                evaluate(self.epoch, self.model, 'real')
+                evaluate(self.epoch, self.model, 'camera')
             
             prefix = 'Epoch {} - '.format(self.epoch)
             write_info = self.get_logger_info(prefix, dict_info=dict_info)
