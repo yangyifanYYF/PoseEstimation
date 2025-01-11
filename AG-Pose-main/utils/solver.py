@@ -33,6 +33,7 @@ class Solver(gorilla.solver.BaseSolver):
         self.per_write = cfg.per_write
         self.epoch = start_epoch
         self.iter = start_iter
+        self.test_camera = cfg.test_camera
         
         if start_epoch != 1:
             self.lr_scheduler.last_epoch = start_iter
@@ -56,7 +57,9 @@ class Solver(gorilla.solver.BaseSolver):
             
             if self.epoch > 10:
                 evaluate(self.epoch, self.model, 'real')
-                evaluate(self.epoch, self.model, 'camera')
+                if self.test_camera:
+                    
+                    evaluate(self.epoch, self.model, 'camera')
             
             prefix = 'Epoch {} - '.format(self.epoch)
             write_info = self.get_logger_info(prefix, dict_info=dict_info)
