@@ -14,6 +14,7 @@ train_dataset:
   shuffle: True
   drop_last: True
   pin_memory: True
+  camera: False
 
 test_dataset:
   img_size: 224         # [192, 224]
@@ -25,7 +26,10 @@ pose_net:
   rgb_backbone: dino    # [resnet, dino]
   fuse_type: self_attn    # [self_attn, concat]
   last_module: GAFA          # [LG, GAFA]
+  first_module: IAKD # [IAKD, IAKD1]
   cat_num: 6
+  clip: False
+  cls_token: True
   FF:
     AttnLayer:
       block_num: 4
@@ -45,9 +49,9 @@ pose_net:
     K: [16, 32]
     d_model: 256
   LG:
-    K: 16
     d_model: 256
     AttnLayer:
+      K: 16
       block_num: 2
       d_model: 256
       dim_ffn: 256
@@ -89,8 +93,11 @@ loss:
   pose: 0.3
   th: 0.01
   obj_aware: True
+  Pareto: False
+  sym: True
 
 rd_seed: 1
 
 per_val: 10  # do the evaluation per per_val epochs 
 per_write: 50  # write down the info per per_write iterations
+test_camera: False
