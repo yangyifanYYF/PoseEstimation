@@ -623,7 +623,118 @@ class InstanceAdaptiveKeypointDetector(nn.Module):
         heatmap = F.softmax(heatmap / 0.1, dim=2)
         
         return batch_kpt_query, heatmap
+
+class InstanceAdaptiveKeypointDetector1(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.kpt_num = cfg.kpt_num
+        self.query_dim = cfg.query_dim
+        # initialize shared kpt_query for all categories
+        self.kpt_query = nn.Parameter(torch.empty(self.kpt_num, self.query_dim)) # (kpt_num, query_dim)
+        nn.init.xavier_normal_(self.kpt_query)
         
+        # build attention layer
+        self.attn_layer = AttnLayer(cfg.AttnLayer)
+        self.mlp1 = nn.Sequential(
+            nn.Linear(128*5, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+        )
+        self.mlp2 = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.ReLU(),
+            nn.Linear(64, 128),
+            nn.ReLU(),
+            nn.Linear(128, 128),
+        )
+        self.norm1 = nn.LayerNorm(5*128)
+        
+    def forward(self, fused_feature, pts):
+        """_summary_
+
+        Args:
+            fused_feature (_type_): (b, n, 2c)
+            pts:                (b, n, 3)
+            cls:                (b, )
+        """
+        b, n, _ = fused_feature.shape
+        
+        pos_enc = self.mlp2(pts) # (b, n, c)
+        global_feature = torch.mean(fused_feature, dim=1, keepdim=True) # (b, 1, 2c)
+        fused_feature2 = torch.cat([fused_feature, global_feature.repeat(1, n, 1), pos_enc], dim=2) # (b, n, 5c)
+        fused_feature1 = self.norm1(fused_feature2)
+        fused_feature1 = self.mlp1(fused_feature1) # (b, n, 2c)
+        fused_feature = fused_feature + fused_feature1
+        
+        input_feature = fused_feature.transpose(1,2)  # (b, 2c, n)
+        
+        batch_kpt_query = self.kpt_query.unsqueeze(0).repeat(b, 1, 1)
+        # (b, kpt_num, 2c)  (b, kpt_num, n)
+        batch_kpt_query, attn = self.attn_layer(batch_kpt_query, fused_feature) 
+        
+        # cos similarity <a, b> / |a|*|b|
+        norm1 = torch.norm(batch_kpt_query, p=2, dim=2, keepdim=True) 
+        norm2 = torch.norm(input_feature, p=2, dim=1, keepdim=True) 
+        heatmap = torch.bmm(batch_kpt_query, input_feature) / (norm1 * norm2 + 1e-7)
+        heatmap = F.softmax(heatmap / 0.1, dim=2)
+        
+        return batch_kpt_query, heatmap
+        
+class CrossAttnBlock(nn.Module):
+    def __init__(self, d_model=256, num_heads=4, dim_ffn=256, dropout=0.0, dropout_attn=None):
+        super().__init__()
+        if dropout_attn is None:
+            dropout_attn = dropout
+            
+        self.self_attn = nn.MultiheadAttention(d_model, num_heads, dropout=dropout, batch_first=True)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.dropout1 = nn.Dropout(dropout, inplace=False)
+        self.dropout2 = nn.Dropout(dropout, inplace=False)
+        self.ffn = nn.Sequential(nn.Linear(d_model, dim_ffn),
+                                 nn.ReLU(), nn.Dropout(dropout, inplace=False),
+                                 nn.Linear(dim_ffn, d_model))
+        
+    def with_pos_embed(self, tensor, pos=None):
+        return tensor if pos is None else tensor + pos
+    
+    
+    def forward(self, q, k):
+        
+        # self-attn
+        q2 = self.norm1(q)
+        q2, _ = self.self_attn(q2, 
+                                               k, 
+                                               value=k
+                                                )
+        q = q + self.dropout1(q2)
+        
+        # ffn
+        q2 = self.norm2(q)
+        q2 = self.ffn(q2)
+        q = q + self.dropout2(q2)
+        
+        return q
+
+class CrossAttnLayer(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.block_num = cfg.block_num
+        self.d_model = cfg.d_model
+        self.num_head = cfg.num_head
+        self.dim_ffn = cfg.dim_ffn
+        
+        # build attention blocks
+        self.attn_blocks = nn.ModuleList()
+        for i in range(self.block_num):
+            self.attn_blocks.append(CrossAttnBlock(d_model=self.d_model, num_heads=self.num_head, dim_ffn=self.dim_ffn, dropout=0.0, dropout_attn=None))
+
+        
+    def forward(self, q, k):
+        for i in range(self.block_num):
+            q = self.attn_blocks[i](q, k)
+        
+        return q
 class PoseSizeEstimator(nn.Module):
     def __init__(self):
         super(PoseSizeEstimator, self).__init__()
@@ -694,18 +805,39 @@ class PoseSizeEstimator(nn.Module):
 class FeatureFusion(nn.Module):
     def __init__(self, cfg):
         super(FeatureFusion, self).__init__()
-        self.attn_layer = SelfAttnLayer(cfg.AttnLayer)
+        self.self_attn_layer = SelfAttnLayer(cfg.AttnLayer)
+        self.cross_attn_layer = CrossAttnLayer(cfg.AttnLayer)
+        self.mlp1 = nn.Sequential(
+            nn.Linear(1, 128),
+            nn.ReLU(),
+            nn.Linear(128, 256),
+        )
+        # self.embedding = nn.Embedding(6, 128)
         
-    def forward(self, rgb_local, pts_local):
+    def forward(self, rgb_local, pts_local, text_feature=None, cls=None):
         """_summary_
 
         Args:
             rgb_local (_type_): (b, c, n)
             pts_local (_type_): (b, c, n)
+            text_feature (_type_): (b, 2c, n)
+            cls (_type_): (b, 1)
 
         Returns:
             fused_feature: (b, c, n)
         """
-        fused_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2)  # (b, n, 2c)
-        fused_feature = self.attn_layer(fused_feature) # (b, n, 2c)
+        if cls is not None:
+            # cls = self.embedding(cls)
+            cls = cls.float().unsqueeze(1)
+            cls_token = self.mlp1(cls)
+            cls_token = cls_token.unsqueeze(1).expand(-1, pts_local.size(2), -1)
+            rgbd_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2) # (b, n, 2c)
+            fused_feature = cls_token + rgbd_feature
+        if text_feature is not None:
+            rgbd_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2) # (b, n, 2c)
+            fused_feature = rgbd_feature + text_feature.transpose(1, 2) # (b, n, 2c)
+            # fused_feature = self.cross_attn_layer(rgbd_feature, text_feature)
+        else:
+            fused_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2)  # (b, n, 2c)
+            fused_feature = self.self_attn_layer(fused_feature) # (b, n, 2c)
         return fused_feature # (b, n, 2c)

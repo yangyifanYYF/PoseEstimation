@@ -4,7 +4,8 @@ import torch.nn.functional as F
 from model.losses import ChamferDis, PoseDis, SmoothL1Dis, ChamferDis_wo_Batch
 from utils.data_utils import generate_augmentation
 from model.modules import ModifiedResnet, PointNet2MSG
-from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor, LocalGlobal, FeatureFusion
+from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor, LocalGlobal, FeatureFusion, InstanceAdaptiveKeypointDetector1
+from transformers import CLIPProcessor, CLIPModel
 
 class Net(nn.Module):
     def __init__(self, cfg):
@@ -24,12 +25,11 @@ class Net(nn.Module):
             self.feature_mlp = nn.Sequential(
                 nn.Conv1d(384, 128, 1),
             )
-        else:
-            raise NotImplementedError
         
         self.pts_extractor = PointNet2MSG(radii_list=[[0.01, 0.02], [0.02,0.04], [0.04,0.08], [0.08,0.16]])
         
         self.IAKD = InstanceAdaptiveKeypointDetector(cfg.IAKD)
+        self.IAKD1 = InstanceAdaptiveKeypointDetector1(cfg.IAKD)
         self.GAFA = GeometricAwareFeatureAggregator(cfg.GAFA)
 
         self.nocs_predictor = NOCS_Predictor(cfg.NOCS_Predictor)
@@ -38,6 +38,16 @@ class Net(nn.Module):
         self.reconstructor = Reconstructor(cfg.Reconstructor)
         self.LocalGlobal = LocalGlobal(cfg.LG)
         self.FeatureFusion = FeatureFusion(cfg.FF)
+        if self.cfg.clip:
+            self.processor = CLIPProcessor.from_pretrained("/workspace/code/AG-Pose-main/model/clip-vit-base-patch16")
+            self.model = CLIPModel.from_pretrained("/workspace/code/AG-Pose-main/model/clip-vit-base-patch16")
+            self.synset_names = ['bowl', 'camera', 'can', 'laptop', 'mug', 'bottle']
+            self.clip_mlp1 = nn.Sequential(
+                nn.Conv1d(512, 128, 1),
+            )
+            self.clip_mlp2 = nn.Sequential(
+                nn.Conv1d(512, 256, 1),
+            )
         
         
     def forward(self, inputs):
@@ -65,6 +75,24 @@ class Net(nn.Module):
             dino_feature = F.interpolate(dino_feature, size=(num_patches * 14, num_patches * 14), mode='bilinear', align_corners=False) 
             dino_feature = dino_feature.reshape(b, f_dim, -1) 
             rgb_local = self.feature_mlp(dino_feature)
+        elif self.cfg.rgb_backbone == 'clip':
+            mean = torch.tensor([0.485, 0.456, 0.406])
+            std = torch.tensor([0.229, 0.224, 0.225])
+            
+            device = rgb.device
+            std = std.to(device)
+            mean = mean.to(device)
+
+            # 反归一化公式：input[c] = output[c] * std[c] + mean[c]
+            rgb_original = rgb * std.view(3, 1, 1) + mean.view(3, 1, 1)
+            rgb_original = rgb_original.clamp(0, 1)  # 确保值在 [0, 1] 范围
+
+            inputs = self.processor(images=rgb_original, return_tensors="pt", do_rescale=False)
+            inputs = {key: value.to(device) for key, value in inputs.items()}
+            with torch.no_grad():
+                image_features = self.model.get_image_features(**inputs)
+                image_features = image_features.unsqueeze(2).repeat(1, 1, pts.size(1))
+            rgb_local = self.clip_mlp1(image_features) # (b, c, n)
         else:
             raise NotImplementedError
         
@@ -79,12 +107,31 @@ class Net(nn.Module):
 
         pts_local = self.pts_extractor(pts) # b, c, n
         
-        if self.fuse_type == 'concat':
-            fused_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2) # (b, n, 2c)
-        elif self.fuse_type == 'self_attn':
-            fused_feature = self.FeatureFusion(rgb_local, pts_local) # (b, n, 2c)
+        if self.cfg.clip:
+            text = ['a photo of a ' + self.synset_names[i.item()] for i in cls.flatten()]
+            inputs = self.processor(text=text, return_tensors="pt", padding=True)
+            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            # 将inputs中的所有张量移动到设备上
+            inputs = {key: value.to(device) for key, value in inputs.items()}
+            with torch.no_grad():
+                text_feature = self.model.get_text_features(**inputs)
+                text_feature = text_feature.unsqueeze(2).repeat(1, 1, pts.size(1))
+            text_feature = self.clip_mlp2(text_feature)
+            fused_feature = self.FeatureFusion(rgb_local, pts_local, text_feature=text_feature) # (b, n, 2c)
+            
+        elif self.cfg.cls_token:
+            fused_feature = self.FeatureFusion(rgb_local, pts_local, cls=cls) # (b, n, 2c)
+        else:
+            if self.fuse_type == 'concat':
+                fused_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2) # (b, n, 2c)
+            elif self.fuse_type == 'self_attn':
+                fused_feature = self.FeatureFusion(rgb_local, pts_local) # (b, n, 2c)
         
-        batch_kpt_query, heat_map = self.IAKD(fused_feature)
+        if self.cfg.first_module == 'IAKD':
+            batch_kpt_query, heat_map = self.IAKD(fused_feature)
+        elif self.cfg.first_module == 'IAKD1':
+            batch_kpt_query, heat_map = self.IAKD1(fused_feature, pts)
+        
         kpt_3d = torch.bmm(heat_map, pts) 
         kpt_feature = torch.bmm(heat_map, fused_feature)
         
