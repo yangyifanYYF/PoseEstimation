@@ -102,8 +102,20 @@ class TrainingDataset(Dataset):
         assert(len(gts['class_ids'])==len(gts['instance_ids']))
         mask = cv2.imread(img_path + '_mask.png')[:, :, 2] #480*640
 
-        idx = np.random.randint(0, num_instance)
-        cat_id = gts['class_ids'][idx] - 1 # convert to 0-indexed
+        if self.cfg.camera:
+            cat_id = -1
+            for idx in range(num_instance):
+                if gts['class_ids'][idx] == 3:
+                    if np.random.rand() < 0.5:  # 50% 概率
+                        cat_id = 2
+                        break
+            if cat_id == -1:
+                idx = np.random.randint(0, num_instance)
+                cat_id = gts['class_ids'][idx] - 1 # convert to 0-indexed
+        else:
+            idx = np.random.randint(0, num_instance)
+            cat_id = gts['class_ids'][idx] - 1
+ 
         rmin, rmax, cmin, cmax = get_bbox(gts['bboxes'][idx])
         mask = np.equal(mask, gts['instance_ids'][idx])    
         mask = np.logical_and(mask , depth > 0)
@@ -160,16 +172,16 @@ class TrainingDataset(Dataset):
         # print(gts.keys())
         size = gts['scales'][idx] * gts['sizes'][idx].astype(np.float32)
 
-        if not self.sym:
-            # symmetry
-            if cat_id in self.sym_ids:
-                theta_x = rotation[0, 0] + rotation[2, 2]
-                theta_y = rotation[0, 2] - rotation[2, 0]
-                r_norm = math.sqrt(theta_x**2 + theta_y**2)
-                s_map = np.array([[theta_x/r_norm, 0.0, -theta_y/r_norm],
-                                    [0.0,            1.0,  0.0           ],
-                                    [theta_y/r_norm, 0.0,  theta_x/r_norm]])
-                rotation = rotation @ s_map
+        # if not self.sym:
+        # symmetry
+        if cat_id in self.sym_ids:
+            theta_x = rotation[0, 0] + rotation[2, 2]
+            theta_y = rotation[0, 2] - rotation[2, 0]
+            r_norm = math.sqrt(theta_x**2 + theta_y**2)
+            s_map = np.array([[theta_x/r_norm, 0.0, -theta_y/r_norm],
+                                [0.0,            1.0,  0.0           ],
+                                [theta_y/r_norm, 0.0,  theta_x/r_norm]])
+            rotation = rotation @ s_map
                 
         qo = (pts - translation[np.newaxis, :]) / (np.linalg.norm(size)+1e-8) @ rotation
         dis = np.linalg.norm(qo[:, np.newaxis, :] - model[np.newaxis, :, :], axis=2)
