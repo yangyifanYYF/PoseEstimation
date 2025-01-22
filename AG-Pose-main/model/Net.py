@@ -42,12 +42,20 @@ class Net(nn.Module):
             self.processor = CLIPProcessor.from_pretrained("/workspace/code/AG-Pose-main/model/clip-vit-base-patch16")
             self.model = CLIPModel.from_pretrained("/workspace/code/AG-Pose-main/model/clip-vit-base-patch16")
             self.synset_names = ['bowl', 'camera', 'can', 'laptop', 'mug', 'bottle']
+            self.description = ['The bowl has a circular rim, a rounded concave interior, and a gently curved or flat base.', 
+                                "The camera's shape can be described as a compact rectangular prism with a cylindrical lens protruding from the front.", 
+                                "A can is a cylindrical object with a circular base and uniform height, typically featuring smooth surfaces and well-defined edges at the top and bottom.",
+                                "A laptop is a rectangular, flat, and foldable device with a hinged design, typically consisting of a screen on one side and a keyboard on the other.",
+                                "The mug has a cylindrical shape with a handle attached to the side, typically with a flat base and a slightly curved rim.", 
+                                "The bottle typically has a cylindrical shape with a narrow neck, a wider body, and a flat or slightly rounded base."]
             self.clip_mlp1 = nn.Sequential(
                 nn.Conv1d(512, 128, 1),
             )
             self.clip_mlp2 = nn.Sequential(
-                nn.Conv1d(512, 256, 1),
-            )
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+        )
         
         
     def forward(self, inputs):
@@ -108,7 +116,8 @@ class Net(nn.Module):
         pts_local = self.pts_extractor(pts) # b, c, n
         
         if self.cfg.clip:
-            text = ['a photo of a ' + self.synset_names[i.item()] for i in cls.flatten()]
+            text = ['A photo of a ' + self.synset_names[i.item()] + '. ' + self.description[j.item()] 
+                    for i, j in zip(cls.flatten(), cls.flatten())]
             inputs = self.processor(text=text, return_tensors="pt", padding=True)
             device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
             # 将inputs中的所有张量移动到设备上
@@ -116,7 +125,7 @@ class Net(nn.Module):
             with torch.no_grad():
                 text_feature = self.model.get_text_features(**inputs)
                 text_feature = text_feature.unsqueeze(2).repeat(1, 1, pts.size(1))
-            text_feature = self.clip_mlp2(text_feature)
+            text_feature = self.clip_mlp2(text_feature.transpose(1,2)).transpose(1,2)
             fused_feature = self.FeatureFusion(rgb_local, pts_local, text_feature=text_feature) # (b, n, 2c)
             
         elif self.cfg.cls_token:

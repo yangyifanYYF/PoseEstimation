@@ -183,10 +183,13 @@ class LGAttnBlock(nn.Module):
         pos_enc2 = self.fc_delta_4(knn_relative) # (b, kpt_num, k, 2c)
         pos_enc3 = self.fc_delta_5(kpt_3d) # (b, kpt_num, 2c)
         
-        kpt_combined = torch.cat([kpt_feature, pos_enc1], dim=-1) # (b, kpt_num, 4c)
-        knn_combined = torch.cat([knn_feature, pos_enc2], dim=-1) # (b, kpt_num, k, 4c)
-        kpt_combined = self.fc_delta1(kpt_combined) # (b, kpt_num, 2c)
-        knn_combined = self.fc_delta2(knn_combined) # (b, kpt_num, k, 2c)
+        # kpt_combined = torch.cat([kpt_feature, pos_enc1], dim=-1) # (b, kpt_num, 4c)
+        # knn_combined = torch.cat([knn_feature, pos_enc2], dim=-1) # (b, kpt_num, k, 4c)
+        # kpt_combined = self.fc_delta1(kpt_combined) # (b, kpt_num, 2c)
+        # knn_combined = self.fc_delta2(knn_combined) # (b, kpt_num, k, 2c)
+        
+        kpt_combined = kpt_feature + pos_enc1
+        knn_combined = knn_feature + pos_enc2
         
         
         kpt_num = kpt_combined.shape[1]
@@ -210,6 +213,7 @@ class LGAttnBlock(nn.Module):
         kpt_global = torch.mean(kpt_combined, dim=1)  # (b, 2c)
         kpt_global = kpt_global.unsqueeze(1).expand(-1, kpt_num, -1)  # (b, kpt_num, 2c)
         input = self.fuse_mlp(torch.cat([kpt_combined, kpt_global, pos_enc3], dim=-1)) # (b, kpt_num, 2c)
+        # input = kpt_combined + kpt_global + pos_enc3
         input1 = self.norm2(input)
         output, _ = self.self_attn(input1, 
                                                input1, 
@@ -645,7 +649,7 @@ class InstanceAdaptiveKeypointDetector1(nn.Module):
             nn.ReLU(),
             nn.Linear(64, 128),
             nn.ReLU(),
-            nn.Linear(128, 128),
+            nn.Linear(128, 256),
         )
         self.norm1 = nn.LayerNorm(5*128)
         
@@ -659,12 +663,12 @@ class InstanceAdaptiveKeypointDetector1(nn.Module):
         """
         b, n, _ = fused_feature.shape
         
-        pos_enc = self.mlp2(pts) # (b, n, c)
+        pos_enc = self.mlp2(pts) # (b, n, 2c)
         global_feature = torch.mean(fused_feature, dim=1, keepdim=True) # (b, 1, 2c)
-        fused_feature2 = torch.cat([fused_feature, global_feature.repeat(1, n, 1), pos_enc], dim=2) # (b, n, 5c)
-        fused_feature1 = self.norm1(fused_feature2)
-        fused_feature1 = self.mlp1(fused_feature1) # (b, n, 2c)
-        fused_feature = fused_feature + fused_feature1
+        # fused_feature2 = torch.cat([fused_feature, global_feature.repeat(1, n, 1), pos_enc], dim=2) # (b, n, 5c)
+        # fused_feature1 = self.norm1(fused_feature2)
+        # fused_feature1 = self.mlp1(fused_feature1) # (b, n, 2c)
+        fused_feature = fused_feature + global_feature + pos_enc
         
         input_feature = fused_feature.transpose(1,2)  # (b, 2c, n)
         
@@ -812,7 +816,9 @@ class FeatureFusion(nn.Module):
             nn.ReLU(),
             nn.Linear(128, 256),
         )
-        # self.embedding = nn.Embedding(6, 128)
+        self.norm1 = nn.LayerNorm(256)
+        self.norm2 = nn.LayerNorm(256)
+        self.norm3 = nn.LayerNorm(256)
         
     def forward(self, rgb_local, pts_local, text_feature=None, cls=None):
         """_summary_
@@ -832,12 +838,18 @@ class FeatureFusion(nn.Module):
             cls_token = self.mlp1(cls)
             cls_token = cls_token.unsqueeze(1).expand(-1, pts_local.size(2), -1)
             rgbd_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2) # (b, n, 2c)
+            # cls_token = self.norm1(cls_token)
+            # rgbd_feature = self.norm2(rgbd_feature)
             fused_feature = cls_token + rgbd_feature
-        if text_feature is not None:
+        elif text_feature is not None:
             rgbd_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2) # (b, n, 2c)
-            fused_feature = rgbd_feature + text_feature.transpose(1, 2) # (b, n, 2c)
-            # fused_feature = self.cross_attn_layer(rgbd_feature, text_feature)
+            # fused_feature = rgbd_feature + text_feature.transpose(1, 2) # (b, n, 2c)
+            rgbd_feature = self.norm3(rgbd_feature)
+            fused_feature = self.cross_attn_layer(rgbd_feature, text_feature.transpose(1, 2))
+            fused_feature = fused_feature + rgbd_feature
+            return fused_feature
         else:
             fused_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2)  # (b, n, 2c)
-            fused_feature = self.self_attn_layer(fused_feature) # (b, n, 2c)
+        fused_feature1 = self.self_attn_layer(fused_feature) # (b, n, 2c)
+        fused_feature = fused_feature + fused_feature1
         return fused_feature # (b, n, 2c)
