@@ -24,12 +24,13 @@ test_dataset:
 
 pose_net:
   rgb_backbone: dino    # [resnet, dino]
-  fuse_type: self_attn    # [self_attn, concat]
+  fuse_type: concat    # [self_attn, concat]
   last_module: GAFA          # [LG, GAFA]
-  first_module: IAKD # [IAKD, IAKD1]
+  first_module: IAKD # [IAKD, IAKD1, IAKD2]
   cat_num: 6
-  clip: False
-  cls_token: True
+  clip: False 
+  cls_token: False
+  reconstructor: True
   FF:
     AttnLayer:
       block_num: 4
@@ -82,7 +83,7 @@ lr_scheduler:
   step_size_down: 20000
   cycle_momentum: False
 
-max_epoch : 40
+max_epoch : 60
 
 loss:
   cd: 2.0
