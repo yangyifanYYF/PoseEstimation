@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from model.losses import ChamferDis, PoseDis, SmoothL1Dis, ChamferDis_wo_Batch
 from utils.data_utils import generate_augmentation
 from model.modules import ModifiedResnet, PointNet2MSG
-from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor, LocalGlobal, FeatureFusion, InstanceAdaptiveKeypointDetector1
+from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor, LocalGlobal, FeatureFusion, InstanceAdaptiveKeypointDetector1, InstanceAdaptiveKeypointDetector2
 from transformers import CLIPProcessor, CLIPModel
 
 class Net(nn.Module):
@@ -30,6 +30,7 @@ class Net(nn.Module):
         
         self.IAKD = InstanceAdaptiveKeypointDetector(cfg.IAKD)
         self.IAKD1 = InstanceAdaptiveKeypointDetector1(cfg.IAKD)
+        self.IAKD2 = InstanceAdaptiveKeypointDetector2(cfg.IAKD)
         self.GAFA = GeometricAwareFeatureAggregator(cfg.GAFA)
 
         self.nocs_predictor = NOCS_Predictor(cfg.NOCS_Predictor)
@@ -139,7 +140,9 @@ class Net(nn.Module):
         if self.cfg.first_module == 'IAKD':
             batch_kpt_query, heat_map = self.IAKD(fused_feature)
         elif self.cfg.first_module == 'IAKD1':
-            batch_kpt_query, heat_map = self.IAKD1(fused_feature, pts)
+            batch_kpt_query, heat_map = self.IAKD1(fused_feature, cls, pts)
+        elif self.cfg.first_module == 'IAKD2':
+            batch_kpt_query, heat_map = self.IAKD2(fused_feature, cls)
         
         kpt_3d = torch.bmm(heat_map, pts) 
         kpt_feature = torch.bmm(heat_map, fused_feature)

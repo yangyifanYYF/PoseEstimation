@@ -627,15 +627,58 @@ class InstanceAdaptiveKeypointDetector(nn.Module):
         heatmap = F.softmax(heatmap / 0.1, dim=2)
         
         return batch_kpt_query, heatmap
+    
+class InstanceAdaptiveKeypointDetector2(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.kpt_num = cfg.kpt_num
+        self.query_dim = cfg.query_dim
+        self.num_classes = 6  # 类别数
+        
+        # 共享的基础查询
+        self.base_query = nn.Parameter(torch.empty(self.kpt_num, self.query_dim))
+        nn.init.xavier_normal_(self.base_query)
+
+        # 每个类别的偏移量
+        self.offset = nn.Parameter(torch.empty(self.num_classes, self.kpt_num, self.query_dim))
+        nn.init.zeros_(self.offset)  # 初始化偏移为0
+        
+        # 创建注意力层
+        self.attn_layer = AttnLayer(cfg.AttnLayer)
+
+    def forward(self, fused_feature, cls):
+        """_summary_
+
+        Args:
+            fused_feature (_type_): (b, n, 2c)
+            cls:                (b, )
+        """
+        b, n, _ = fused_feature.shape
+        
+        input_feature = fused_feature.transpose(1,2)  # (b, 2c, n)
+        
+        # 根据类别信息生成查询
+        cls_offset = self.offset[cls] # (b, k, 2c)
+        batch_kpt_query = self.base_query.unsqueeze(0).repeat(b, 1, 1) + cls_offset
+
+        batch_kpt_query, attn = self.attn_layer(batch_kpt_query, fused_feature) 
+        
+        # cos similarity <a, b> / |a|*|b|
+        norm1 = torch.norm(batch_kpt_query, p=2, dim=2, keepdim=True) 
+        norm2 = torch.norm(input_feature, p=2, dim=1, keepdim=True) 
+        heatmap = torch.bmm(batch_kpt_query, input_feature) / (norm1 * norm2 + 1e-7)
+        heatmap = F.softmax(heatmap / 0.1, dim=2)
+        
+        return batch_kpt_query, heatmap
 
 class InstanceAdaptiveKeypointDetector1(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.kpt_num = cfg.kpt_num
         self.query_dim = cfg.query_dim
-        # initialize shared kpt_query for all categories
-        self.kpt_query = nn.Parameter(torch.empty(self.kpt_num, self.query_dim)) # (kpt_num, query_dim)
-        nn.init.xavier_normal_(self.kpt_query)
+        # # initialize shared kpt_query for all categories
+        # self.kpt_query = nn.Parameter(torch.empty(self.kpt_num, self.query_dim)) # (kpt_num, query_dim)
+        # nn.init.xavier_normal_(self.kpt_query)
         
         # build attention layer
         self.attn_layer = AttnLayer(cfg.AttnLayer)
@@ -653,7 +696,17 @@ class InstanceAdaptiveKeypointDetector1(nn.Module):
         )
         self.norm1 = nn.LayerNorm(5*128)
         
-    def forward(self, fused_feature, pts):
+        # Learnable category embedding
+        self.category_embedding = nn.Embedding(6, 128)  # Embed category into a 128D space
+
+        # Query generator: Combines global features and category embeddings
+        self.query_generator = nn.Sequential(
+            nn.Linear(256 + 128, 256),  # Combine feature_dim and category embedding
+            nn.ReLU(),
+            nn.Linear(256, self.kpt_num * self.query_dim),  # Generate dynamic queries
+        )
+        
+    def forward(self, fused_feature, cls=None, pts=None):
         """_summary_
 
         Args:
@@ -663,16 +716,29 @@ class InstanceAdaptiveKeypointDetector1(nn.Module):
         """
         b, n, _ = fused_feature.shape
         
-        pos_enc = self.mlp2(pts) # (b, n, 2c)
-        global_feature = torch.mean(fused_feature, dim=1, keepdim=True) # (b, 1, 2c)
-        # fused_feature2 = torch.cat([fused_feature, global_feature.repeat(1, n, 1), pos_enc], dim=2) # (b, n, 5c)
-        # fused_feature1 = self.norm1(fused_feature2)
-        # fused_feature1 = self.mlp1(fused_feature1) # (b, n, 2c)
-        fused_feature = fused_feature + global_feature + pos_enc
+        # pos_enc = self.mlp2(pts) # (b, n, 2c)
+        # global_feature = torch.mean(fused_feature, dim=1, keepdim=True) # (b, 1, 2c)
+        # # fused_feature2 = torch.cat([fused_feature, global_feature.repeat(1, n, 1), pos_enc], dim=2) # (b, n, 5c)
+        # # fused_feature1 = self.norm1(fused_feature2)
+        # # fused_feature1 = self.mlp1(fused_feature1) # (b, n, 2c)
+        # fused_feature = fused_feature + global_feature + pos_enc
+        
+        # Extract global feature summary
+        global_feature = fused_feature.mean(dim=1)  # (batch_size, feature_dim)
+
+        # Get category embeddings
+        category_embedding = self.category_embedding(cls)  # (batch_size, 128)
+
+        # Concatenate global feature and category embedding
+        combined_feature = torch.cat([global_feature, category_embedding], dim=1)  # (batch_size, feature_dim + 128)
+
+        # Generate dynamic queries
+        batch_kpt_query = self.query_generator(combined_feature)  # (batch_size, kpt_num * query_dim)
+        batch_kpt_query = batch_kpt_query.view(b, self.kpt_num, self.query_dim)  # Reshape to (b, kpt_num, query_dim)
         
         input_feature = fused_feature.transpose(1,2)  # (b, 2c, n)
         
-        batch_kpt_query = self.kpt_query.unsqueeze(0).repeat(b, 1, 1)
+        # batch_kpt_query = self.kpt_query.unsqueeze(0).repeat(b, 1, 1)
         # (b, kpt_num, 2c)  (b, kpt_num, n)
         batch_kpt_query, attn = self.attn_layer(batch_kpt_query, fused_feature) 
         
