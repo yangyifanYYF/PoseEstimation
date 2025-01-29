@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 def SmoothL1Dis(p1, p2, threshold=0.1):
     '''
@@ -70,3 +71,55 @@ def UniChamferDis(p1, p2):
     dis = torch.min(dis, 2)[0]
 
     return dis.mean()
+
+def normalize_keypoints(keypoint_positions):
+    """
+    归一化关键点，使不同大小的物体可比
+    """
+    center = keypoint_positions.mean(dim=1, keepdim=True)  # (B, 1, 3)
+    scale = keypoint_positions.std(dim=1, keepdim=True) + 1e-6  # (B, 1, 3) 避免除零
+    return (keypoint_positions - center) / scale
+
+def procrustes_align(A, B):
+    """
+    使用 Procrustes Analysis 进行关键点对齐
+    A, B: (num_kpts, 3) 关键点矩阵
+    """
+    # 1. 去均值，消除平移
+    A_mean = A.mean(dim=0, keepdim=True)
+    B_mean = B.mean(dim=0, keepdim=True)
+    A_centered = A - A_mean
+    B_centered = B - B_mean
+
+    # 2. 计算最优旋转矩阵 R
+    U, _, Vt = torch.svd(A_centered.T @ B_centered)  # SVD 分解
+    R = U @ Vt.T  # 旋转矩阵
+
+    # 3. 变换 B，使其与 A 对齐
+    B_aligned = B_centered @ R.T + A_mean
+
+    return B_aligned
+
+
+def geometric_consistency_loss(keypoint_positions, labels):
+    """
+    约束相同类别物体的关键点结构保持一致
+    """
+    batch_size, num_kpts, _ = keypoint_positions.shape
+    loss = 0
+    count = 0
+
+    # 归一化关键点，使不同大小的物体可比
+    keypoint_positions = normalize_keypoints(keypoint_positions)
+
+    for i in range(batch_size):
+        for j in range(i + 1, batch_size):
+            if labels[i] == labels[j]:  # 仅计算相同类别的样本
+                aligned_kpts_j = procrustes_align(keypoint_positions[i], keypoint_positions[j])
+                R_ij = keypoint_positions[i] @ aligned_kpts_j.T  # 计算几何一致性损失
+                identity = torch.eye(num_kpts, device=keypoint_positions.device)
+                loss += F.mse_loss(R_ij, identity)
+                count += 1
+
+    return loss / max(count, 1)  # 避免除零错误
+

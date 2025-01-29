@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from model.losses import ChamferDis, PoseDis, SmoothL1Dis, ChamferDis_wo_Batch
 from utils.data_utils import generate_augmentation
 from model.modules import ModifiedResnet, PointNet2MSG
-from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor, LocalGlobal, FeatureFusion, InstanceAdaptiveKeypointDetector1, InstanceAdaptiveKeypointDetector2
+from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor, LocalGlobal, FeatureFusion, InstanceAdaptiveKeypointDetector1, InstanceAdaptiveKeypointDetector2, Reconstructor1
 from transformers import CLIPProcessor, CLIPModel
 
 class Net(nn.Module):
@@ -37,6 +37,7 @@ class Net(nn.Module):
         self.estimator = PoseSizeEstimator()
 
         self.reconstructor = Reconstructor(cfg.Reconstructor)
+        self.reconstructor1 = Reconstructor1(cfg.Reconstructor)
         self.LocalGlobal = LocalGlobal(cfg.LG)
         self.FeatureFusion = FeatureFusion(cfg.FF)
         if self.cfg.clip:
@@ -139,26 +140,31 @@ class Net(nn.Module):
         
         if self.cfg.first_module == 'IAKD':
             batch_kpt_query, heat_map = self.IAKD(fused_feature)
+            kpt_3d = torch.bmm(heat_map, pts) 
+            kpt_feature = torch.bmm(heat_map, fused_feature)
         elif self.cfg.first_module == 'IAKD1':
             batch_kpt_query, heat_map = self.IAKD1(fused_feature, cls, pts)
+            kpt_3d = torch.bmm(heat_map, pts) 
+            kpt_feature = torch.bmm(heat_map, fused_feature)
         elif self.cfg.first_module == 'IAKD2':
-            batch_kpt_query, heat_map = self.IAKD2(fused_feature, cls)
-        
-        kpt_3d = torch.bmm(heat_map, pts) 
-        kpt_feature = torch.bmm(heat_map, fused_feature)
+            kpt_3d, kpt_feature = self.IAKD2(fused_feature, pts)  
         
         if self.last_module == 'LG':
             kpt_feature = self.LocalGlobal(kpt_feature, kpt_3d.detach(), fused_feature, pts)
         elif self.last_module == 'GAFA':
             kpt_feature = self.GAFA(kpt_feature, kpt_3d.detach(), fused_feature, pts)
 
-        recon_model, recon_delta = self.reconstructor(kpt_3d.transpose(1, 2), kpt_feature.transpose(1, 2))
+        if self.cfg.reconstructor == 'Reconstructor':
+            recon_model, recon_delta = self.reconstructor(kpt_3d.transpose(1, 2), kpt_feature.transpose(1, 2))
+        elif self.cfg.reconstructor == 'Reconstructor1':
+            recon_model, recon_delta = self.reconstructor1(kpt_3d.transpose(1, 2), kpt_feature.transpose(1, 2))
         kpt_nocs = self.nocs_predictor(kpt_feature, index)
         r, t, s = self.estimator(kpt_3d, kpt_nocs.detach(), kpt_feature)
 
         if self.training:
             end_points['recon_delta'] = recon_delta
-            end_points['pred_heat_map'] = heat_map
+            if self.cfg.first_module != 'IAKD2':
+                end_points['pred_heat_map'] = heat_map
             end_points['pred_kpt_3d'] =  \
             (kpt_3d @ delta_r.transpose(1, 2)) * delta_s.unsqueeze(2) + delta_t + c
             end_points['recon_model'] =  \
@@ -198,12 +204,18 @@ class Loss(nn.Module):
         # pose 
         loss_pose = PoseDis(self.cfg.sym, endpoints['pred_rotation'], endpoints['pred_translation'], endpoints['pred_size'], rotation_gt, translation_gt, size_gt, endpoints['category_label'], endpoints['mug_handle_visibility'])
         # cd
-        loss_cd = self.cd_dis_k2p(pts, pred_kpt_3d)
+        if self.cfg.chamfer_dis_k2p:
+            loss_cd = self.chamfer_dis_k2p(pts, pred_kpt_3d)
+        else:
+            loss_cd = self.cd_dis_k2p(pts, pred_kpt_3d)
         # nocs
         kpt_nocs_gt = (pred_kpt_3d - translation_gt.unsqueeze(1)) / (torch.norm(size_gt, dim=1).view(b, 1, 1) + 1e-8) @ rotation_gt
         loss_nocs = SmoothL1Dis(endpoints['pred_kpt_nocs'], kpt_nocs_gt)
         # div
-        loss_diversity = self.diversity_loss_3d(pred_kpt_3d)
+        if self.cfg.diversity_loss_3d1:
+            loss_diversity = self.diversity_loss_3d1(pred_kpt_3d)
+        else:
+            loss_diversity = self.diversity_loss_3d(pred_kpt_3d)
         # reconstruction
         if self.cfg.obj_aware:
             # recon_with_mask
@@ -321,6 +333,17 @@ class Loss(nn.Module):
         dis = torch.min(dis, dim=1)[0]
         return torch.mean(dis)
     
+    def chamfer_dis_k2p(self, pts, pred_kpt_3d):
+        """改进版：双向 Chamfer 距离"""
+        dis1 = torch.norm(pts.unsqueeze(2) - pred_kpt_3d.unsqueeze(1), dim=3)  # (b, n, kpt_num)
+        min_dis1 = torch.min(dis1, dim=1)[0]  # (b, kpt_num) - 点云到关键点
+
+        dis2 = torch.norm(pred_kpt_3d.unsqueeze(2) - pts.unsqueeze(1), dim=3)  # (b, kpt_num, n)
+        min_dis2 = torch.min(dis2, dim=2)[0]  # (b, kpt_num) - 关键点到点云
+
+        return (torch.mean(min_dis1) + torch.mean(min_dis2)) / 2  # 计算双向平均
+
+    
     def diversity_loss_3d(self, data):
         """_summary_
 
@@ -344,3 +367,23 @@ class Loss(nn.Module):
         loss = loss / (kpt_num * (kpt_num-1))
         
         return loss.mean()
+    
+    def diversity_loss_3d1(self, data):
+        """计算 3D 关键点的多样性损失，鼓励关键点之间的距离尽可能大"""
+        threshold = self.cfg.th
+        b, kpt_num = data.shape[0], data.shape[1]
+
+        # 计算关键点间的欧式距离矩阵
+        dis_mat = data.unsqueeze(2) - data.unsqueeze(1)
+        dis_mat = torch.norm(dis_mat, p=2, dim=3)
+
+        # 避免自距离影响计算
+        dis_mat.fill_diagonal_(float('inf'))
+
+        # 使用 torch.clamp 让距离不超过 threshold，保持梯度平滑
+        dis_mat = torch.clamp(dis_mat, max=threshold)
+
+        # 计算 loss（可以选用不同方案）
+        loss = torch.mean(dis_mat)  # 归一化 loss，保证不同 kpt_num 规模下梯度稳定
+
+        return loss

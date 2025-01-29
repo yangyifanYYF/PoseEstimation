@@ -70,6 +70,60 @@ class Reconstructor(nn.Module):
         
         recon_model = (recon_delta + kpt_3d_interleave).transpose(1, 2).contiguous()
         return recon_model, recon_delta
+    
+class Reconstructor1(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.pts_per_kpt = cfg.pts_per_kpt
+        self.ndim = cfg.ndim
+        
+        self.pos_enc = nn.Sequential(
+            nn.Conv1d(3, 64, 1),
+            nn.ReLU(),
+            nn.Conv1d(64, 128, 1),
+            nn.ReLU(),
+            nn.Conv1d(128, self.ndim, 1),
+        )
+        
+        self.mlp = nn.Sequential(
+            nn.Conv1d(self.ndim, self.ndim, 1),
+            nn.ReLU(),
+            nn.Conv1d(self.ndim, self.ndim, 1),
+        )
+        
+        self.shape_decoder = nn.Sequential(
+            nn.Conv1d(self.ndim, 512, 1),
+            nn.ReLU(),
+            nn.Conv1d(512, 512, 1),
+            nn.ReLU(),
+            nn.Conv1d(512, 3*self.pts_per_kpt, 1),
+        )
+
+    def forward(self, kpt_3d, kpt_feature):
+        """
+        Args:
+            kpt_3d: (b, 3, kpt_num)
+            kpt_feature: (b, c, kpt_num)
+
+        Returns:
+            recon_model: (b, 3, pts_per_kpt*kpt_num)
+        """
+        b = kpt_3d.shape[0]
+        kpt_num = kpt_3d.shape[2]
+        # pos_enc_3d = self.pos_enc(kpt_3d) # (b, c, kpt_num)
+        kpt_feature = self.mlp(kpt_feature) # (b, c, kpt_num)
+        
+        # global_feature = torch.mean(pos_enc_3d + kpt_feature, dim=2, keepdim=True) # (b, c, 1)
+        # recon_feature = torch.cat([global_feature.repeat(1, 1, kpt_num), kpt_feature], dim=1) # (b, 2c, kpt_num)        
+        # (b, 3*pts_per_kpt, kpt_num)
+        recon_delta = self.shape_decoder(kpt_feature)
+        # (b, pts_per_kpt*kpt_num, 3)
+        recon_delta = recon_delta.transpose(1, 2).reshape(b, kpt_num*self.pts_per_kpt, 3).contiguous()
+        # (b, pts_per_kpt*kpt_num, 3)
+        kpt_3d_interleave = kpt_3d.transpose(1, 2).repeat_interleave(self.pts_per_kpt, dim=1).contiguous()
+        
+        recon_model = (recon_delta + kpt_3d_interleave).transpose(1, 2).contiguous()
+        return recon_model, recon_delta
 
 class LocalGlobal(nn.Module):
     def __init__(self, cfg):
@@ -113,7 +167,7 @@ class LGAttnBlock(nn.Module):
                                  nn.ReLU(), nn.Dropout(dropout, inplace=False),
                                  nn.Linear(dim_ffn, d_model))
         self.fuse_mlp = nn.Sequential(
-            nn.Linear(3*d_model, d_model),
+            nn.Linear(2*d_model, d_model),
             nn.ReLU(),
             nn.Linear(d_model, d_model)
         )
@@ -210,9 +264,9 @@ class LGAttnBlock(nn.Module):
         
         # self-attn
         # 对 kpt_combined 进行平均池化并广播，得到全局特征
-        kpt_global = torch.mean(kpt_combined, dim=1)  # (b, 2c)
+        kpt_global = torch.mean(kpt_combined + pos_enc3, dim=1)  # (b, 2c)
         kpt_global = kpt_global.unsqueeze(1).expand(-1, kpt_num, -1)  # (b, kpt_num, 2c)
-        input = self.fuse_mlp(torch.cat([kpt_combined, kpt_global, pos_enc3], dim=-1)) # (b, kpt_num, 2c)
+        input = self.fuse_mlp(torch.cat([kpt_combined, kpt_global], dim=-1)) # (b, kpt_num, 2c)
         # input = kpt_combined + kpt_global + pos_enc3
         input1 = self.norm2(input)
         output, _ = self.self_attn(input1, 
@@ -630,46 +684,77 @@ class InstanceAdaptiveKeypointDetector(nn.Module):
     
 class InstanceAdaptiveKeypointDetector2(nn.Module):
     def __init__(self, cfg):
-        super().__init__()
-        self.kpt_num = cfg.kpt_num
-        self.query_dim = cfg.query_dim
-        self.num_classes = 6  # 类别数
+        super(InstanceAdaptiveKeypointDetector2, self).__init__()
+        self.num_keypoints = cfg.kpt_num
+
+        # 逐点特征降维和进一步提取
+        self.conv1 = nn.Conv1d(256, 256, kernel_size=1, bias=False)
+        self.bn1 = nn.BatchNorm1d(256)
+        self.conv2 = nn.Conv1d(256, 256, kernel_size=1, bias=False)
+        self.bn2 = nn.BatchNorm1d(256)
+        self.conv3 = nn.Conv1d(256, 512, kernel_size=1, bias=False)
+        self.bn3 = nn.BatchNorm1d(512)
+
+        # 逐点偏移量预测
+        self.offset_pred = nn.Conv1d(512, cfg.kpt_num * 3, kernel_size=1)
         
-        # 共享的基础查询
-        self.base_query = nn.Parameter(torch.empty(self.kpt_num, self.query_dim))
-        nn.init.xavier_normal_(self.base_query)
+        self.dropout = nn.Dropout(p=0.2)
 
-        # 每个类别的偏移量
-        self.offset = nn.Parameter(torch.empty(self.num_classes, self.kpt_num, self.query_dim))
-        nn.init.zeros_(self.offset)  # 初始化偏移为0
-        
-        # 创建注意力层
-        self.attn_layer = AttnLayer(cfg.AttnLayer)
+        # 关键点特征提取模块
+        self.keypoint_feature_mlp = nn.Sequential(
+            nn.Conv1d(256, 256, kernel_size=1, bias=False),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Conv1d(256, 256, kernel_size=1, bias=False),
+            nn.BatchNorm1d(256),  # 额外的 BatchNorm 让训练更稳定
+            nn.ReLU(),
+            nn.Dropout(p=0.2),
+            nn.Conv1d(256, 256, kernel_size=1, bias=False),  # 增加一层 MLP
+        )
 
-    def forward(self, fused_feature, cls):
-        """_summary_
-
-        Args:
-            fused_feature (_type_): (b, n, 2c)
-            cls:                (b, )
+    def forward(self, fused_feature, input_xyz):
         """
-        b, n, _ = fused_feature.shape
-        
-        input_feature = fused_feature.transpose(1,2)  # (b, 2c, n)
-        
-        # 根据类别信息生成查询
-        cls_offset = self.offset[cls] # (b, k, 2c)
-        batch_kpt_query = self.base_query.unsqueeze(0).repeat(b, 1, 1) + cls_offset
+        :param fused_feature: 输入的逐点特征 (B, N, 2C)
+        :param input_xyz: 输入点的三维坐标 (B, N, 3)
+        :return: 
+            keypoint_positions: 每个关键点的位置 (B, num_keypoints, 3)
+            keypoint_features: 每个关键点的特征 (B, num_keypoints, 2c)
+        """
+        batch_size, num_points, feature_dim = fused_feature.size()
 
-        batch_kpt_query, attn = self.attn_layer(batch_kpt_query, fused_feature) 
-        
-        # cos similarity <a, b> / |a|*|b|
-        norm1 = torch.norm(batch_kpt_query, p=2, dim=2, keepdim=True) 
-        norm2 = torch.norm(input_feature, p=2, dim=1, keepdim=True) 
-        heatmap = torch.bmm(batch_kpt_query, input_feature) / (norm1 * norm2 + 1e-7)
-        heatmap = F.softmax(heatmap / 0.1, dim=2)
-        
-        return batch_kpt_query, heatmap
+        # 转换为 (B, 2C, N) 以适配 1D 卷积
+        x = fused_feature.permute(0, 2, 1)  # (B, 2C, N)
+
+        # 卷积提取逐点特征
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+
+        # 预测逐点关键点偏移量
+        offsets = self.offset_pred(x)  # (B, num_keypoints * 3, N)
+        offsets = offsets.permute(0, 2, 1).view(batch_size, num_points, self.num_keypoints, 3)  # (B, N, num_keypoints, 3)
+
+        # 计算每个点的投票关键点位置
+        voted_keypoints = input_xyz.unsqueeze(2) + offsets  # (B, N, num_keypoints, 3)
+
+        # 聚合所有点的投票结果（关键点位置）
+        keypoint_positions = torch.mean(voted_keypoints, dim=1)  # (B, num_keypoints, 3)
+
+        # 关键点特征聚合
+        # 计算点到关键点的距离权重
+        distances = torch.norm(voted_keypoints - keypoint_positions.unsqueeze(1), dim=-1)  # (B, N, num_keypoints)
+        weights = torch.softmax(-distances, dim=1)  # 负距离做 softmax
+        weights = weights / weights.sum(dim=1, keepdim=True)  # 归一化权重 (B, N, num_keypoints)
+
+        # 聚合点云特征到关键点
+        weighted_features = (fused_feature.unsqueeze(2) * weights.unsqueeze(-1)).sum(dim=1)  # (B, num_keypoints, 2C)
+        weighted_features = weighted_features.permute(0, 2, 1)  # (B, 2C, num_keypoints)
+
+        # 使用 MLP 提取关键点特征
+        keypoint_features = self.keypoint_feature_mlp(weighted_features).permute(0, 2, 1)  # (B, num_keypoints, output_feature_dim)
+
+        return keypoint_positions, keypoint_features
 
 class InstanceAdaptiveKeypointDetector1(nn.Module):
     def __init__(self, cfg):
