@@ -6,6 +6,54 @@ import collections
 
 import math
 import numpy as np
+from sklearn.decomposition import PCA
+
+def rotation_matrix_around_axis(axis, angle):
+    """ Generate a rotation matrix to rotate around a given axis by a given angle. """
+    axis = axis / np.linalg.norm(axis)  # Normalize axis
+    cos_theta = np.cos(np.radians(angle))
+    sin_theta = np.sin(np.radians(angle))
+    ux, uy, uz = axis
+    
+    # Rotation matrix using the Rodrigues' rotation formula
+    rotation_matrix = np.array([
+        [cos_theta + ux**2 * (1 - cos_theta), ux * uy * (1 - cos_theta) - uz * sin_theta, ux * uz * (1 - cos_theta) + uy * sin_theta],
+        [uy * ux * (1 - cos_theta) + uz * sin_theta, cos_theta + uy**2 * (1 - cos_theta), uy * uz * (1 - cos_theta) - ux * sin_theta],
+        [uz * ux * (1 - cos_theta) - uy * sin_theta, uz * uy * (1 - cos_theta) + ux * sin_theta, cos_theta + uz**2 * (1 - cos_theta)]
+    ])
+    
+    return rotation_matrix
+
+def generate_full_point_cloud(partial_points, num_points=1024, rotation_angle=360):
+    # Step 1: Perform PCA to find the main axis of the cylinder
+    pca = PCA(n_components=2)
+    pca.fit(partial_points)
+    
+    # Get the principal axis (the direction of the cylinder's symmetry)
+    main_axis = pca.components_[0]
+    
+    # Step 2: Generate the full point cloud by rotating the partial points
+    num_rotations = 1  # Define how many rotations (360 degrees in total)
+    angle_step = rotation_angle / num_rotations  # Increment of each rotation
+    
+    full_points = []
+    
+    # Loop through and rotate the points around the main axis
+    for i in range(num_rotations):
+        angle = i * angle_step
+        rotation_matrix = rotation_matrix_around_axis(main_axis, angle)
+        rotated_points = np.dot(partial_points - np.mean(partial_points, axis=0), rotation_matrix.T) + np.mean(partial_points, axis=0)
+        full_points.append(rotated_points)
+    
+    # Combine all rotated point clouds
+    full_points = np.vstack(full_points)
+    
+    # Optionally downsample to `num_points` if necessary
+    if full_points.shape[0] > num_points:
+        indices = np.random.choice(full_points.shape[0], num_points, replace=False)
+        full_points = full_points[indices]
+    
+    return full_points
 
 # 计算点集之间的欧几里得距离
 def compute_distances(points):

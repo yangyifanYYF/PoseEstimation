@@ -9,6 +9,8 @@ import torch
 import torchvision.transforms as transforms
 from PIL import Image
 from torch.utils.data import Dataset
+import open3d as o3d
+import time
 
 from utils.data_utils import fill_missing, get_bbox, load_composed_depth, load_depth, rgb_add_noise
 
@@ -106,8 +108,12 @@ class TrainingDataset(Dataset):
             cat_id = -1
             for idx in range(num_instance):
                 if gts['class_ids'][idx] == 3:
-                    if np.random.rand() < 0.5:  # 50% 概率
+                    if np.random.rand() < 0.7:  # 70% 概率
                         cat_id = 2
+                        break
+                if gts['class_ids'][idx] == 5:
+                    if np.random.rand() < 0.7:
+                        cat_id = 4
                         break
             if cat_id == -1:
                 idx = np.random.randint(0, num_instance)
@@ -139,8 +145,30 @@ class TrainingDataset(Dataset):
         pts = np.transpose(np.stack([pts0, pts1, pts2]), (1,2,0)).astype(np.float32) # 480*640*3
         pts = pts[rmin:rmax, cmin:cmax, :].reshape((-1, 3))[choose, :]
         
+        # if cat_id == 1:
+        #     # 创建 Open3D 点云对象
+        #     pcd = o3d.geometry.PointCloud()
+        #     pcd.points = o3d.utility.Vector3dVector(pts)
+
+        #     # 保存为 .ply 文件
+        #     o3d.io.write_point_cloud("output1.ply", pcd)
+        
         # add noise
         pts = pts + np.clip(0.001*np.random.randn(pts.shape[0], 3), -0.005, 0.005)
+        
+        # if cat_id == 3:
+        #     full_point_cloud = generate_full_point_cloud(pts)
+        #     pcd = o3d.geometry.PointCloud()
+        #     pcd.points = o3d.utility.Vector3dVector(full_point_cloud)
+
+        #     # 获取当前的时间戳
+        #     timestamp = int(time.time())  # 获取当前的时间戳（秒级）
+            
+        #     # 使用时间戳生成文件名
+        #     filename = f"output_{timestamp}.ply"
+            
+        #     # 保存为 .ply 文件
+        #     o3d.io.write_point_cloud(filename, pcd)
 
         # rgb
         rgb = cv2.imread(img_path + '_color.png')[:, :, :3]
