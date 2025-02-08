@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch_geometric.nn as pyg_nn  # 需要安装 torch_geometric
 
 from rotation_utils import Ortho6d2Mat
 
@@ -167,7 +168,7 @@ class LGAttnBlock(nn.Module):
                                  nn.ReLU(), nn.Dropout(dropout, inplace=False),
                                  nn.Linear(dim_ffn, d_model))
         self.fuse_mlp = nn.Sequential(
-            nn.Linear(2*d_model, d_model),
+            nn.Linear(3*d_model, d_model),
             nn.ReLU(),
             nn.Linear(d_model, d_model)
         )
@@ -264,9 +265,9 @@ class LGAttnBlock(nn.Module):
         
         # self-attn
         # 对 kpt_combined 进行平均池化并广播，得到全局特征
-        kpt_global = torch.mean(kpt_combined + pos_enc3, dim=1)  # (b, 2c)
+        kpt_global = torch.mean(kpt_combined, dim=1)  # (b, 2c)
         kpt_global = kpt_global.unsqueeze(1).expand(-1, kpt_num, -1)  # (b, kpt_num, 2c)
-        input = self.fuse_mlp(torch.cat([kpt_combined, kpt_global], dim=-1)) # (b, kpt_num, 2c)
+        input = self.fuse_mlp(torch.cat([kpt_combined, kpt_global, pos_enc3], dim=-1)) # (b, kpt_num, 2c)
         # input = kpt_combined + kpt_global + pos_enc3
         input1 = self.norm2(input)
         output, _ = self.self_attn(input1, 
@@ -659,7 +660,7 @@ class InstanceAdaptiveKeypointDetector(nn.Module):
         # build attention layer
         self.attn_layer = AttnLayer(cfg.AttnLayer)
         
-    def forward(self, fused_feature):
+    def forward(self, fused_feature, pts):
         """_summary_
 
         Args:
@@ -680,80 +681,184 @@ class InstanceAdaptiveKeypointDetector(nn.Module):
         heatmap = torch.bmm(batch_kpt_query, input_feature) / (norm1 * norm2 + 1e-7)
         heatmap = F.softmax(heatmap / 0.1, dim=2)
         
-        return batch_kpt_query, heatmap
+        kpt_3d = torch.bmm(heatmap, pts) 
+        kpt_feature = torch.bmm(heatmap, fused_feature)
+        
+        return kpt_3d, kpt_feature
+
+class KeypointGraph(nn.Module):
+    def __init__(self, kpt_num, feature_dim, hidden_dim):
+        super(KeypointGraph, self).__init__()
+        
+        # Graph Convolution Layer (GCN)
+        self.conv1 = pyg_nn.GCNConv(feature_dim, hidden_dim)
+        self.conv2 = pyg_nn.GCNConv(hidden_dim, feature_dim)
+    
+    def forward(self, kpt_feature, edge_index):
+        """
+        Args:
+            kpt_feature: (b, kpt_num, feature_dim)  关键点特征
+            edge_index: (2, num_edges)  关键点之间的边
+        
+        Returns:
+            kpt_feature: (b, kpt_num, feature_dim)  经过 GNN 处理后的关键点特征
+        """
+        batch_size, kpt_num, feature_dim = kpt_feature.shape
+        
+        # GNN 只能处理单个图，我们需要展开 batch 维度
+        kpt_feature = kpt_feature.view(-1, feature_dim)  # (b * kpt_num, feature_dim)
+
+        # 通过图卷积层
+        kpt_feature = self.conv1(kpt_feature, edge_index)
+        kpt_feature = F.relu(kpt_feature)
+        kpt_feature = self.conv2(kpt_feature, edge_index)
+
+        # reshape 回原始 batch 维度
+        kpt_feature = kpt_feature.view(batch_size, kpt_num, feature_dim)
+        
+        return kpt_feature
+ 
+class InstanceAdaptiveKeypointDetector3(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.kpt_num = cfg.kpt_num
+        self.query_dim = cfg.query_dim
+
+        # 关键点查询
+        self.kpt_query = nn.Parameter(torch.empty(self.kpt_num, self.query_dim))
+        nn.init.xavier_normal_(self.kpt_query)
+
+        # 注意力层
+        self.attn_layer = AttnLayer(cfg.AttnLayer)
+
+        # GNN 关键点关系建模
+        self.kpt_graph = KeypointGraph(kpt_num=self.kpt_num, 
+                                       feature_dim=self.query_dim, 
+                                       hidden_dim=256)
+
+        # 预定义关键点的邻接矩阵（如果使用固定结构）
+        self.edge_index = self.build_edge_index()
+        
+        # Query generator: Combines global features and category embeddings
+        self.query_generator = nn.Sequential(
+            nn.Linear(128, 256),  # Combine feature_dim and category embedding
+            nn.ReLU(),
+            nn.Linear(256, 512),  # Combine feature_dim and category embedding
+            nn.ReLU(),
+            nn.Linear(512, self.kpt_num * self.query_dim)
+        )
+        
+        self.category_embedding = nn.Embedding(6, 128)
+
+    def build_edge_index(self):
+        """
+        构建关键点图的邻接矩阵
+        """
+        # 假设关键点是全连接的（可以替换成基于骨架的拓扑结构）
+        edges = []
+        for i in range(self.kpt_num):
+            for j in range(i+1, self.kpt_num):
+                edges.append([i, j])
+                edges.append([j, i])
+        edge_index = torch.tensor(edges, dtype=torch.long).T  # (2, num_edges)
+        return edge_index
+
+    def forward(self, fused_feature, cls, pts):
+        b, n, _ = fused_feature.shape
+        input_feature = fused_feature.transpose(1, 2)  # (b, 2c, n)
+
+        # Get category embeddings
+        category_embedding = self.category_embedding(cls)
+        batch_kpt_query = self.query_generator(category_embedding).view(b, self.kpt_num, self.query_dim)
+        
+        # batch_kpt_query = self.kpt_query.unsqueeze(0).repeat(b, 1, 1)
+        batch_kpt_query, attn = self.attn_layer(batch_kpt_query, fused_feature)
+
+        # 计算关键点的 3D 坐标
+        norm1 = torch.norm(batch_kpt_query, p=2, dim=2, keepdim=True)
+        norm2 = torch.norm(input_feature, p=2, dim=1, keepdim=True)
+        heatmap = torch.bmm(batch_kpt_query, input_feature) / (norm1 * norm2 + 1e-7)
+        heatmap = F.softmax(heatmap / 0.1, dim=2)
+
+        kpt_3d = torch.bmm(heatmap, pts)  # (b, kpt_num, 3)
+        kpt_feature = torch.bmm(heatmap, fused_feature)  # (b, kpt_num, 2c)
+
+        # 通过 GNN 进一步优化关键点特征
+        kpt_feature1 = self.kpt_graph(kpt_feature, self.edge_index.to(kpt_feature.device))
+        
+        kpt_feature = kpt_feature + kpt_feature1
+
+        return kpt_3d, kpt_feature
+
     
 class InstanceAdaptiveKeypointDetector2(nn.Module):
     def __init__(self, cfg):
         super(InstanceAdaptiveKeypointDetector2, self).__init__()
         self.num_keypoints = cfg.kpt_num
-
-        # 逐点特征降维和进一步提取
+        
+        # 特征提取 + Self-Attention
         self.conv1 = nn.Conv1d(256, 256, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm1d(256)
         self.conv2 = nn.Conv1d(256, 256, kernel_size=1, bias=False)
         self.bn2 = nn.BatchNorm1d(256)
-        self.conv3 = nn.Conv1d(256, 512, kernel_size=1, bias=False)
-        self.bn3 = nn.BatchNorm1d(512)
-
-        # 逐点偏移量预测
-        self.offset_pred = nn.Conv1d(512, cfg.kpt_num * 3, kernel_size=1)
+        self.attn_layer = SelfAttnLayer(cfg.AttnLayer)
         
-        self.dropout = nn.Dropout(p=0.2)
-
-        # 关键点特征提取模块
-        self.keypoint_feature_mlp = nn.Sequential(
-            nn.Conv1d(256, 256, kernel_size=1, bias=False),
-            nn.BatchNorm1d(256),
+        # MLP 预测关键点偏移
+        self.offset_mlp = nn.Sequential(
+            nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Dropout(p=0.2),
-            nn.Conv1d(256, 256, kernel_size=1, bias=False),
-            nn.BatchNorm1d(256),  # 额外的 BatchNorm 让训练更稳定
-            nn.ReLU(),
-            nn.Dropout(p=0.2),
-            nn.Conv1d(256, 256, kernel_size=1, bias=False),  # 增加一层 MLP
+            nn.Linear(256, cfg.kpt_num * 3)
         )
-
+        
+        # 关键点特征提取
+        self.keypoint_feature_mlp = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256)
+        )
+        
+        self.pos_fc = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.ReLU(),
+            nn.Linear(64, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+        )
+        
+    
     def forward(self, fused_feature, input_xyz):
-        """
-        :param fused_feature: 输入的逐点特征 (B, N, 2C)
-        :param input_xyz: 输入点的三维坐标 (B, N, 3)
-        :return: 
-            keypoint_positions: 每个关键点的位置 (B, num_keypoints, 3)
-            keypoint_features: 每个关键点的特征 (B, num_keypoints, 2c)
-        """
-        batch_size, num_points, feature_dim = fused_feature.size()
-
-        # 转换为 (B, 2C, N) 以适配 1D 卷积
-        x = fused_feature.permute(0, 2, 1)  # (B, 2C, N)
-
-        # 卷积提取逐点特征
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        x = F.relu(self.bn3(self.conv3(x)))
-
-        # 预测逐点关键点偏移量
-        offsets = self.offset_pred(x)  # (B, num_keypoints * 3, N)
-        offsets = offsets.permute(0, 2, 1).view(batch_size, num_points, self.num_keypoints, 3)  # (B, N, num_keypoints, 3)
-
-        # 计算每个点的投票关键点位置
-        voted_keypoints = input_xyz.unsqueeze(2) + offsets  # (B, N, num_keypoints, 3)
-
-        # 聚合所有点的投票结果（关键点位置）
-        keypoint_positions = torch.mean(voted_keypoints, dim=1)  # (B, num_keypoints, 3)
-
-        # 关键点特征聚合
-        # 计算点到关键点的距离权重
-        distances = torch.norm(voted_keypoints - keypoint_positions.unsqueeze(1), dim=-1)  # (B, N, num_keypoints)
-        weights = torch.softmax(-distances, dim=1)  # 负距离做 softmax
-        weights = weights / weights.sum(dim=1, keepdim=True)  # 归一化权重 (B, N, num_keypoints)
-
-        # 聚合点云特征到关键点
-        weighted_features = (fused_feature.unsqueeze(2) * weights.unsqueeze(-1)).sum(dim=1)  # (B, num_keypoints, 2C)
-        weighted_features = weighted_features.permute(0, 2, 1)  # (B, 2C, num_keypoints)
-
-        # 使用 MLP 提取关键点特征
-        keypoint_features = self.keypoint_feature_mlp(weighted_features).permute(0, 2, 1)  # (B, num_keypoints, output_feature_dim)
-
+        batch_size, num_points, _ = fused_feature.size()
+        
+        # 1D 卷积提取特征
+        # fused_feature = fused_feature.permute(0, 2, 1)  # (B, 2C, N)
+        # fused_feature = F.relu(self.bn1(self.conv1(fused_feature)))
+        # fused_feature = F.relu(self.bn2(self.conv2(fused_feature)))
+        # fused_feature = fused_feature.permute(0, 2, 1)  # (B, N, 2C)
+        
+        # Cross-Attention 处理全局信息
+        pos_enc = self.pos_fc(input_xyz)
+        fused_feature = self.attn_layer(fused_feature + pos_enc)
+        
+        # 关键点偏移量预测 (MLP)
+        offsets = self.offset_mlp(fused_feature)  # (B, N, num_keypoints * 3)
+        offsets = offsets.view(batch_size, num_points, self.num_keypoints, 3)
+        
+        # 计算投票关键点位置
+        keypoint_positions = torch.mean(input_xyz.unsqueeze(2) + offsets, dim=1)  # (B, num_keypoints, 3)
+        
+        # 计算每个点到每个关键点的距离
+        offsets = torch.norm(offsets, p=2, dim=-1)  # (B, N, num_keypoints), 每个点到关键点的欧几里得距离
+        
+        # 反比加权（小距离对应大权重）
+        epsilon = 1e-6  # 为避免除以零，加一个小常数
+        weights = 1 / (offsets + epsilon)  # (B, N, num_keypoints)
+        
+        # 对每个关键点进行聚合（对每个点进行加权平均）
+        keypoint_features = self.keypoint_feature_mlp((weights.unsqueeze(-1) * fused_feature.unsqueeze(2)).sum(dim=1)) # (B, num_keypoints, 2C)
+        # keypoint_features = (weights.unsqueeze(-1) * fused_feature.unsqueeze(2)).sum(dim=1) # (B, num_keypoints, 2C)
+        
         return keypoint_positions, keypoint_features
 
 class InstanceAdaptiveKeypointDetector1(nn.Module):
@@ -783,12 +888,18 @@ class InstanceAdaptiveKeypointDetector1(nn.Module):
         
         # Learnable category embedding
         self.category_embedding = nn.Embedding(6, 128)  # Embed category into a 128D space
+        
+        # 共享的基础查询
+        self.base_query = nn.Parameter(torch.empty(self.kpt_num, self.query_dim))
+        nn.init.xavier_normal_(self.base_query)
 
         # Query generator: Combines global features and category embeddings
         self.query_generator = nn.Sequential(
-            nn.Linear(256 + 128, 256),  # Combine feature_dim and category embedding
+            nn.Linear(128, 256),  # Combine feature_dim and category embedding
             nn.ReLU(),
-            nn.Linear(256, self.kpt_num * self.query_dim),  # Generate dynamic queries
+            nn.Linear(256, 512),  # Combine feature_dim and category embedding
+            nn.ReLU(),
+            nn.Linear(512, self.kpt_num * self.query_dim)
         )
         
     def forward(self, fused_feature, cls=None, pts=None):
@@ -809,17 +920,19 @@ class InstanceAdaptiveKeypointDetector1(nn.Module):
         # fused_feature = fused_feature + global_feature + pos_enc
         
         # Extract global feature summary
-        global_feature = fused_feature.mean(dim=1)  # (batch_size, feature_dim)
+        # global_feature = fused_feature.mean(dim=1)  # (batch_size, feature_dim)
 
         # Get category embeddings
         category_embedding = self.category_embedding(cls)  # (batch_size, 128)
 
         # Concatenate global feature and category embedding
-        combined_feature = torch.cat([global_feature, category_embedding], dim=1)  # (batch_size, feature_dim + 128)
+        # combined_feature = torch.cat([global_feature, category_embedding], dim=1)  # (batch_size, feature_dim + 128)
+
+        batch_kpt_query = self.base_query.unsqueeze(0).repeat(b, 1, 1) + self.query_generator(category_embedding).view(b, self.kpt_num, self.query_dim)
 
         # Generate dynamic queries
-        batch_kpt_query = self.query_generator(combined_feature)  # (batch_size, kpt_num * query_dim)
-        batch_kpt_query = batch_kpt_query.view(b, self.kpt_num, self.query_dim)  # Reshape to (b, kpt_num, query_dim)
+        # batch_kpt_query = self.query_generator(combined_feature)  # (batch_size, kpt_num * query_dim)
+        # batch_kpt_query = batch_kpt_query.view(b, self.kpt_num, self.query_dim)  # Reshape to (b, kpt_num, query_dim)
         
         input_feature = fused_feature.transpose(1,2)  # (b, 2c, n)
         
@@ -995,8 +1108,8 @@ class FeatureFusion(nn.Module):
         elif text_feature is not None:
             rgbd_feature = torch.cat((pts_local, rgb_local), dim=1).transpose(1, 2) # (b, n, 2c)
             # fused_feature = rgbd_feature + text_feature.transpose(1, 2) # (b, n, 2c)
-            rgbd_feature = self.norm3(rgbd_feature)
-            fused_feature = self.cross_attn_layer(rgbd_feature, text_feature.transpose(1, 2))
+            rgbd_feature1 = self.norm3(rgbd_feature)
+            fused_feature = self.cross_attn_layer(rgbd_feature1, text_feature.transpose(1, 2))
             fused_feature = fused_feature + rgbd_feature
             return fused_feature
         else:

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from model.losses import ChamferDis, PoseDis, SmoothL1Dis, ChamferDis_wo_Batch
 from utils.data_utils import generate_augmentation
 from model.modules import ModifiedResnet, PointNet2MSG
-from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor, LocalGlobal, FeatureFusion, InstanceAdaptiveKeypointDetector1, InstanceAdaptiveKeypointDetector2, Reconstructor1
+from model.Net_modules import InstanceAdaptiveKeypointDetector, GeometricAwareFeatureAggregator, PoseSizeEstimator, NOCS_Predictor, Reconstructor, LocalGlobal, FeatureFusion, InstanceAdaptiveKeypointDetector1, InstanceAdaptiveKeypointDetector2, Reconstructor1, InstanceAdaptiveKeypointDetector3
 from transformers import CLIPProcessor, CLIPModel
 
 class Net(nn.Module):
@@ -31,6 +31,7 @@ class Net(nn.Module):
         self.IAKD = InstanceAdaptiveKeypointDetector(cfg.IAKD)
         self.IAKD1 = InstanceAdaptiveKeypointDetector1(cfg.IAKD)
         self.IAKD2 = InstanceAdaptiveKeypointDetector2(cfg.IAKD)
+        self.IAKD3 = InstanceAdaptiveKeypointDetector3(cfg.IAKD)
         self.GAFA = GeometricAwareFeatureAggregator(cfg.GAFA)
 
         self.nocs_predictor = NOCS_Predictor(cfg.NOCS_Predictor)
@@ -139,15 +140,16 @@ class Net(nn.Module):
                 fused_feature = self.FeatureFusion(rgb_local, pts_local) # (b, n, 2c)
         
         if self.cfg.first_module == 'IAKD':
-            batch_kpt_query, heat_map = self.IAKD(fused_feature)
-            kpt_3d = torch.bmm(heat_map, pts) 
-            kpt_feature = torch.bmm(heat_map, fused_feature)
+            kpt_3d, kpt_feature = self.IAKD(fused_feature, pts)
+            
         elif self.cfg.first_module == 'IAKD1':
             batch_kpt_query, heat_map = self.IAKD1(fused_feature, cls, pts)
             kpt_3d = torch.bmm(heat_map, pts) 
             kpt_feature = torch.bmm(heat_map, fused_feature)
         elif self.cfg.first_module == 'IAKD2':
-            kpt_3d, kpt_feature = self.IAKD2(fused_feature, pts)  
+            kpt_3d, kpt_feature = self.IAKD2(fused_feature, pts)
+        elif self.cfg.first_module == 'IAKD3':
+            kpt_3d, kpt_feature = self.IAKD3(fused_feature, cls, pts)  
         
         if self.last_module == 'LG':
             kpt_feature = self.LocalGlobal(kpt_feature, kpt_3d.detach(), fused_feature, pts)
@@ -163,8 +165,8 @@ class Net(nn.Module):
 
         if self.training:
             end_points['recon_delta'] = recon_delta
-            if self.cfg.first_module != 'IAKD2':
-                end_points['pred_heat_map'] = heat_map
+            # if self.cfg.first_module != 'IAKD2' and self.cfg.first_module != 'IAKD1':
+            #     end_points['pred_heat_map'] = heat_map
             end_points['pred_kpt_3d'] =  \
             (kpt_3d @ delta_r.transpose(1, 2)) * delta_s.unsqueeze(2) + delta_t + c
             end_points['recon_model'] =  \
@@ -340,8 +342,16 @@ class Loss(nn.Module):
 
         dis2 = torch.norm(pred_kpt_3d.unsqueeze(2) - pts.unsqueeze(1), dim=3)  # (b, kpt_num, n)
         min_dis2 = torch.min(dis2, dim=2)[0]  # (b, kpt_num) - 关键点到点云
+        loss = (torch.mean(min_dis1) + torch.mean(min_dis2)) / 2
+        
+        # # 计算密度：统计每个关键点在点云中的 `k` 近邻个数 (b, kpt_num)
+        # k_neighbors = torch.topk(-dis2, 10, dim=1)[0]  # 取负值，找到最近 10 个点
+        # density = torch.mean(k_neighbors, dim=1)  # 计算均值，表示局部密度
+        # density = 1.0 / (density + 1e-6)  # 取密度的反比，密度低 → 权重高
+        # density = density / density.sum(dim=1, keepdim=True)  # 归一化权重 (b, kpt_num)
+        # loss = torch.sum(loss * density, dim=1)  # 计算加权平均
 
-        return (torch.mean(min_dis1) + torch.mean(min_dis2)) / 2  # 计算双向平均
+        return loss  # 计算双向平均
 
     
     def diversity_loss_3d(self, data):
@@ -369,21 +379,20 @@ class Loss(nn.Module):
         return loss.mean()
     
     def diversity_loss_3d1(self, data):
-        """计算 3D 关键点的多样性损失，鼓励关键点之间的距离尽可能大"""
         threshold = self.cfg.th
         b, kpt_num = data.shape[0], data.shape[1]
 
-        # 计算关键点间的欧式距离矩阵
-        dis_mat = data.unsqueeze(2) - data.unsqueeze(1)
-        dis_mat = torch.norm(dis_mat, p=2, dim=3)
+        dis_mat = data.unsqueeze(2) - data.unsqueeze(1)  # (b, kpt_num, kpt_num, 3)
+        dis_mat = torch.norm(dis_mat, p=2, dim=3)  # (b, kpt_num, kpt_num)
 
-        # 避免自距离影响计算
-        dis_mat.fill_diagonal_(float('inf'))
+        # 避免自距离影响计算（用 clone() 避免 in-place 操作）
+        dis_mat = dis_mat.clone()
+        dis_mat.diagonal(dim1=1, dim2=2).fill_(float('inf'))
 
-        # 使用 torch.clamp 让距离不超过 threshold，保持梯度平滑
+        # 限制最大距离
         dis_mat = torch.clamp(dis_mat, max=threshold)
 
-        # 计算 loss（可以选用不同方案）
-        loss = torch.mean(dis_mat)  # 归一化 loss，保证不同 kpt_num 规模下梯度稳定
+        # 计算 loss
+        loss = torch.mean(dis_mat)
 
         return loss
