@@ -168,7 +168,7 @@ class LGAttnBlock(nn.Module):
                                  nn.ReLU(), nn.Dropout(dropout, inplace=False),
                                  nn.Linear(dim_ffn, d_model))
         self.fuse_mlp = nn.Sequential(
-            nn.Linear(3*d_model, d_model),
+            nn.Linear(2*d_model, d_model),
             nn.ReLU(),
             nn.Linear(d_model, d_model)
         )
@@ -207,11 +207,7 @@ class LGAttnBlock(nn.Module):
             nn.Linear(64, d_model),
             nn.ReLU(),
             nn.Linear(d_model, d_model),
-        )
-        
-    def with_pos_embed(self, tensor, pos=None):
-        return tensor if pos is None else tensor + pos
-    
+        ) 
     
     def forward(self, kpt_feature, kpt_3d, obj_feature, pts):
         """_summary_
@@ -265,9 +261,10 @@ class LGAttnBlock(nn.Module):
         
         # self-attn
         # 对 kpt_combined 进行平均池化并广播，得到全局特征
+        kpt_combined += pos_enc3
         kpt_global = torch.mean(kpt_combined, dim=1)  # (b, 2c)
         kpt_global = kpt_global.unsqueeze(1).expand(-1, kpt_num, -1)  # (b, kpt_num, 2c)
-        input = self.fuse_mlp(torch.cat([kpt_combined, kpt_global, pos_enc3], dim=-1)) # (b, kpt_num, 2c)
+        input = self.fuse_mlp(torch.cat([kpt_combined, kpt_global], dim=-1)) # (b, kpt_num, 2c)
         # input = kpt_combined + kpt_global + pos_enc3
         input1 = self.norm2(input)
         output, _ = self.self_attn(input1, 
@@ -276,12 +273,12 @@ class LGAttnBlock(nn.Module):
                                                 )
         kpt_feature = input + self.dropout2(output) # (b, kpt_num, 2c)
         
-        # ffn
-        kpt_feature2 = self.norm3(kpt_feature)
-        kpt_feature2 = self.ffn(kpt_feature2)
-        kpt_feature2 = kpt_feature + self.dropout3(kpt_feature2)
+        # # ffn
+        # kpt_feature2 = self.norm3(kpt_feature)
+        # kpt_feature2 = self.ffn(kpt_feature2)
+        # kpt_feature2 = kpt_feature + self.dropout3(kpt_feature2)
         
-        return kpt_feature2
+        return kpt_feature
 
 class LGAttnLayer(nn.Module):
     def __init__(self, cfg):
@@ -690,9 +687,12 @@ class KeypointGraph(nn.Module):
     def __init__(self, kpt_num, feature_dim, hidden_dim):
         super(KeypointGraph, self).__init__()
         
-        # Graph Convolution Layer (GCN)
-        self.conv1 = pyg_nn.GCNConv(feature_dim, hidden_dim)
-        self.conv2 = pyg_nn.GCNConv(hidden_dim, feature_dim)
+        # # Graph Convolution Layer (GCN)
+        # self.conv1 = pyg_nn.GCNConv(feature_dim, hidden_dim)
+        # self.conv2 = pyg_nn.GCNConv(hidden_dim, feature_dim)
+        
+        self.conv1 = pyg_nn.GATConv(feature_dim, hidden_dim, heads=4, concat=False)
+        self.conv2 = pyg_nn.GATConv(hidden_dim, feature_dim, heads=4, concat=False)
     
     def forward(self, kpt_feature, edge_index):
         """
@@ -749,6 +749,19 @@ class InstanceAdaptiveKeypointDetector3(nn.Module):
         )
         
         self.category_embedding = nn.Embedding(6, 128)
+        self.fc1 = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.ReLU(),
+            nn.Linear(64, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256),
+        )
+        
+        self.fuse_mlp = nn.Sequential(
+            nn.Linear(2*256, 256),
+            nn.ReLU(),
+            nn.Linear(256, 256)
+        )
 
     def build_edge_index(self):
         """
@@ -766,6 +779,12 @@ class InstanceAdaptiveKeypointDetector3(nn.Module):
     def forward(self, fused_feature, cls, pts):
         b, n, _ = fused_feature.shape
         input_feature = fused_feature.transpose(1, 2)  # (b, 2c, n)
+        
+        pos_enc = self.fc1(pts)  # (b, n, 2c)
+        fused_feature = fused_feature + pos_enc
+        global_feature = torch.mean(fused_feature, dim=1, keepdim=True)  # (b, 1, 2c)
+        fused_feature1 = self.fuse_mlp(torch.cat([fused_feature, global_feature.expand(-1, n, -1)], dim=-1)) # (b, n, 2c)
+        fused_feature = fused_feature + fused_feature1
 
         # Get category embeddings
         category_embedding = self.category_embedding(cls)
@@ -781,7 +800,7 @@ class InstanceAdaptiveKeypointDetector3(nn.Module):
         heatmap = F.softmax(heatmap / 0.1, dim=2)
 
         kpt_3d = torch.bmm(heatmap, pts)  # (b, kpt_num, 3)
-        kpt_feature = torch.bmm(heatmap, fused_feature)  # (b, kpt_num, 2c)
+        kpt_feature = torch.bmm(heatmap, input_feature.transpose(1,2))  # (b, kpt_num, 2c)
 
         # 通过 GNN 进一步优化关键点特征
         kpt_feature1 = self.kpt_graph(kpt_feature, self.edge_index.to(kpt_feature.device))

@@ -79,11 +79,11 @@ def get_parser():
                         help="gpu num")
     parser.add_argument("--config",
                         type=str,
-                        default="config/camera_real.yaml",
+                        default="code/AG-Pose-main/config/REAL/camera_real.yaml",
                         help="path to config file")
     parser.add_argument("--test_epoch",
                         type=int,
-                        default=30,
+                        default=11,
                         help="test epoch")
     parser.add_argument("--draw_dir",
                         type=str,
@@ -156,7 +156,7 @@ if __name__ == "__main__":
                 data = cPickle.load(f)
         
             image_path = data['image_path']
-            image = cv2.imread(image_path + '_color.png')[:, :, :3]
+            image = cv2.imread('/workspace/code/data/PoseData/Real'+image_path[9:] + '_color.png')[:, :, :3]
             image = image[:, :, ::-1] #480*640*3 RGB
             intrinsics = np.array([[591.0125, 0, 322.525], [0, 590.16775, 244.11084], [0, 0, 1]])
             

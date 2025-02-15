@@ -7,8 +7,8 @@ train_dataset:
   image_size: 224       # [192, 224]
   sample_num: 1024
   outlier_th: 0.1
-  syn_bs: 30
-  real_bs: 10
+  syn_bs: 24
+  real_bs: 8
   syn_num_workers: 16
   real_num_workers: 4
   shuffle: True
@@ -25,12 +25,12 @@ test_dataset:
 pose_net:
   rgb_backbone: dino    # [resnet, dino]
   fuse_type: concat    # [self_attn, concat]
-  last_module: GAFA          # [LG, GAFA]
-  first_module: IAKD # [IAKD, IAKD1, IAKD2]
+  last_module: LG          # [LG, GAFA]
+  first_module: IAKD3 # [IAKD, IAKD1, IAKD2, IAKD3]
   cat_num: 6
-  clip: False 
+  clip: True 
   cls_token: False
-  reconstructor: True
+  reconstructor: Reconstructor1
   FF:
     AttnLayer:
       block_num: 4
@@ -96,6 +96,8 @@ loss:
   obj_aware: True
   Pareto: False
   sym: True
+  chamfer_dis_k2p: False
+  diversity_loss_3d1: False
 
 rd_seed: 1
 
