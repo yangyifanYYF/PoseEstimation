@@ -122,9 +122,9 @@ class Net(nn.Module):
             text = ['A photo of a ' + self.synset_names[i.item()] + '. ' + self.description[j.item()] 
                     for i, j in zip(cls.flatten(), cls.flatten())]
             inputs = self.processor(text=text, return_tensors="pt", padding=True)
-            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+            # device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
             # 将inputs中的所有张量移动到设备上
-            inputs = {key: value.to(device) for key, value in inputs.items()}
+            inputs = {key: value.cuda() for key, value in inputs.items()}
             with torch.no_grad():
                 text_feature = self.model.get_text_features(**inputs)
                 text_feature = text_feature.unsqueeze(2).repeat(1, 1, pts.size(1))
