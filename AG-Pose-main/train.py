@@ -60,6 +60,7 @@ def init():
 
 if __name__ == "__main__":
     logger, cfg = init()
+    torch.cuda.set_device(int(cfg.gpus))
 
     logger.warning(
         "************************ Start Logging ************************")

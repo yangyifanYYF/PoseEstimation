@@ -182,7 +182,7 @@ def main(epoch=11, model=None, dataset_name=None):
             model = Net(cfg.pose_net)
             model = model.cuda()
 
-        checkpoint = os.path.join(cfg.ckpt_dir, 'epoch_' + str(cfg.test_epoch) + '.pt')
+        checkpoint = '/workspace/data/results/myresults/epoch_32.pt'
         logger.info("=> loading checkpoint from path: {} ...".format(checkpoint))
         gorilla.solver.load_checkpoint(model=model, filename=checkpoint)
  

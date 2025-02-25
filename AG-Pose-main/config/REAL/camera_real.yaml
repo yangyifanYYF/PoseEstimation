@@ -3,7 +3,7 @@ setting: supervised
 train_dataset:
   dataset_name: camera_real
   dataset_dir: /workspace/code/data/PoseData
-  num_mini_batch_per_epoch: 4000
+  num_mini_batch_per_epoch: 5000
   image_size: 224       # [192, 224]
   sample_num: 1024
   outlier_th: 0.1
@@ -95,7 +95,7 @@ loss:
   th: 0.01
   obj_aware: True
   Pareto: False
-  sym: True
+  sym: False
   chamfer_dis_k2p: False
   diversity_loss_3d1: False
 

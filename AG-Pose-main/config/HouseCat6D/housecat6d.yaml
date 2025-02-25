@@ -16,7 +16,7 @@ train_dataset:
 test_dataset:
   img_size: 224
   sample_num: 1024
-  dataset_dir: YOUR_DATASER_DIR
+  dataset_dir: /workspace/data/housecat6D
   dataset_name: housecat6d
 
 

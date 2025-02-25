@@ -105,19 +105,39 @@ class TrainingDataset(Dataset):
         mask = cv2.imread(img_path + '_mask.png')[:, :, 2] #480*640
 
         if self.cfg.camera:
-            cat_id = -1
-            for idx in range(num_instance):
-                if gts['class_ids'][idx] == 3:
-                    if np.random.rand() < 0.7:  # 70% 概率
-                        cat_id = 2
-                        break
-                if gts['class_ids'][idx] == 5:
-                    if np.random.rand() < 0.7:
-                        cat_id = 4
-                        break
-            if cat_id == -1:
+            if np.random.rand() < 0.7:
                 idx = np.random.randint(0, num_instance)
-                cat_id = gts['class_ids'][idx] - 1 # convert to 0-indexed
+                cat_id = gts['class_ids'][idx] - 1
+            else:
+                cat_id = -1
+                for idx in range(num_instance):
+                    if gts['class_ids'][idx] == 1:
+                        if np.random.rand() < 0.7:  # 70% 概率
+                            cat_id = 0
+                            break
+                    if gts['class_ids'][idx] == 6:
+                        if np.random.rand() < 0.7:
+                            cat_id = 5
+                            break
+                    if gts['class_ids'][idx] == 5:
+                        if np.random.rand() < 0.7:
+                            cat_id = 4
+                            break
+                    if gts['class_ids'][idx] == 3:
+                        if np.random.rand() < 0.7:
+                            cat_id = 2
+                            break
+                    if gts['class_ids'][idx] == 4:
+                        if np.random.rand() < 0.7:
+                            cat_id = 3
+                            break
+                    if gts['class_ids'][idx] == 2:
+                        if np.random.rand() < 0.7:
+                            cat_id = 1
+                            break
+                if cat_id == -1:
+                    idx = np.random.randint(0, num_instance)
+                    cat_id = gts['class_ids'][idx] - 1 # convert to 0-indexed
         else:
             idx = np.random.randint(0, num_instance)
             cat_id = gts['class_ids'][idx] - 1

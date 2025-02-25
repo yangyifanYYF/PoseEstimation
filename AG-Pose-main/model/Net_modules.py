@@ -111,11 +111,7 @@ class Reconstructor1(nn.Module):
         """
         b = kpt_3d.shape[0]
         kpt_num = kpt_3d.shape[2]
-        # pos_enc_3d = self.pos_enc(kpt_3d) # (b, c, kpt_num)
-        kpt_feature = self.mlp(kpt_feature) # (b, c, kpt_num)
-        
-        # global_feature = torch.mean(pos_enc_3d + kpt_feature, dim=2, keepdim=True) # (b, c, 1)
-        # recon_feature = torch.cat([global_feature.repeat(1, 1, kpt_num), kpt_feature], dim=1) # (b, 2c, kpt_num)        
+        kpt_feature = self.mlp(kpt_feature) # (b, c, kpt_num)     
         # (b, 3*pts_per_kpt, kpt_num)
         recon_delta = self.shape_decoder(kpt_feature)
         # (b, pts_per_kpt*kpt_num, 3)

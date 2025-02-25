@@ -32,7 +32,7 @@ def get_parser():
                         help="gpu num")
     parser.add_argument("--config",
                         type=str,
-                        default="config/HouseCat6D/housecat6d.yaml",
+                        default="/workspace/code/AG-Pose-main/config/HouseCat6D/housecat6d.yaml",
                         help="path to config file")
     parser.add_argument("--test_epoch",
                         type=int,
