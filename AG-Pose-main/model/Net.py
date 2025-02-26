@@ -44,13 +44,26 @@ class Net(nn.Module):
         if self.cfg.clip:
             self.processor = CLIPProcessor.from_pretrained("/workspace/code/AG-Pose-main/model/clip-vit-base-patch16")
             self.model = CLIPModel.from_pretrained("/workspace/code/AG-Pose-main/model/clip-vit-base-patch16")
-            self.synset_names = ['bowl', 'camera', 'can', 'laptop', 'mug', 'bottle']
-            self.description = ['The bowl has a circular rim, a rounded concave interior, and a gently curved or flat base.', 
-                                "The camera's shape can be described as a compact rectangular prism with a cylindrical lens protruding from the front.", 
-                                "A can is a cylindrical object with a circular base and uniform height, typically featuring smooth surfaces and well-defined edges at the top and bottom.",
-                                "A laptop is a rectangular, flat, and foldable device with a hinged design, typically consisting of a screen on one side and a keyboard on the other.",
-                                "The mug has a cylindrical shape with a handle attached to the side, typically with a flat base and a slightly curved rim.", 
-                                "The bottle typically has a cylindrical shape with a narrow neck, a wider body, and a flat or slightly rounded base."]
+            if self.cat_num == 6:
+                self.synset_names = ['bowl', 'camera', 'can', 'laptop', 'mug', 'bottle']
+                self.description = ['The bowl has a circular rim, a rounded concave interior, and a gently curved or flat base.', 
+                                    "The camera's shape can be described as a compact rectangular prism with a cylindrical lens protruding from the front.", 
+                                    "A can is a cylindrical object with a circular base and uniform height, typically featuring smooth surfaces and well-defined edges at the top and bottom.",
+                                    "A laptop is a rectangular, flat, and foldable device with a hinged design, typically consisting of a screen on one side and a keyboard on the other.",
+                                    "The mug has a cylindrical shape with a handle attached to the side, typically with a flat base and a slightly curved rim.", 
+                                    "The bottle typically has a cylindrical shape with a narrow neck, a wider body, and a flat or slightly rounded base."]
+            else:
+                self.synset_names = ['box', 'bottle', 'can', 'cup', 'remote', 'teapot', 'cutlery', 'glass', 'shoe', 'tube']
+                self.description = ['A box is a rectangular prism with six flat, orthogonal faces, eight vertices, and twelve edges, where the edges connect at right angles.', 
+                                    "The bottle typically has a cylindrical shape with a narrow neck, a wider body, and a flat or slightly rounded base.",
+                                    "A can is a cylindrical object with a circular base and uniform height, typically featuring smooth surfaces and well-defined edges at the top and bottom.",
+                                    'The cup has a cylindrical body with a circular base, a smooth, curved surface, and a handle extending from the side.',
+                                    'The remote is a rectangular, slightly curved object with rounded edges, featuring a grid-like arrangement of buttons on its front surface.',
+                                    'A teapot can be approximated as a composite shape consisting of a nearly spherical or cylindrical body, a curved spout extending outward, a semi-circular handle on the opposite side, and a slightly convex or flat lid on top.',
+                                    'The cutlery has an elongated shape with a relatively uniform width along the handle, tapering or widening near the functional end (e.g., fork prongs, spoon bowl, or knife blade), providing clear keypoints at the handle tip, functional end, and possible curvature transitions.',
+                                    'The shape of a glass can be described as a cylindrical body with a circular rim and base, potentially tapering or expanding slightly, with symmetry along its vertical axis, which facilitates keypoint extraction and feature representation.',
+                                    'The shape of a shoe can be approximated as a deformed elongated ellipsoid with a slightly curved sole and a tapered front, which helps in defining key regions like the toe box, heel, and midsole for keypoint extraction and feature analysis.',
+                                    'A tube has a cylindrical shape with two circular ends, and its surface is smooth and curved, making it ideal for keypoint extraction along the central axis and at the edges of the ends.']
             self.clip_mlp1 = nn.Sequential(
                 nn.Conv1d(512, 128, 1),
             )
