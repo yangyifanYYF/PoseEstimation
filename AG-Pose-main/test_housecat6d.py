@@ -10,6 +10,7 @@ import gorilla
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(BASE_DIR, 'provider'))
 sys.path.append(os.path.join(BASE_DIR, 'model'))
+sys.path.append(os.path.join(BASE_DIR, 'model', 'pointnet2'))
 sys.path.append(os.path.join(BASE_DIR, 'utils'))
 sys.path.append(os.path.join(BASE_DIR, 'lib'))
 sys.path.append(os.path.join(BASE_DIR, 'lib', 'sphericalmap_utils'))
@@ -84,9 +85,9 @@ if __name__ == "__main__":
     logger.info("=> loading model ...")
     model = Net(cfg.pose_net)
     model = model.cuda()
-    checkpoint = os.path.join(cfg.ckpt_dir, 'epoch_' + str(cfg.test_epoch) + '.pt')
+    checkpoint = '/workspace/data/results/myresults/final/epoch_32.pt'
     logger.info("=> loading checkpoint from: {} ...".format(checkpoint))
-    gorilla.solver.load_checkpoint(model=model, filename=checkpoint)
+    gorilla.solver.load_checkpoint(model=model, filename=checkpoint, strict=False)
 
     # data loader
     dataset = HouseCat6DTestDataset(cfg.test_dataset.img_size, cfg.test_dataset.sample_num, cfg.test_dataset.dataset_dir)

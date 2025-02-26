@@ -95,7 +95,7 @@ loss:
   th: 0.01
   obj_aware: True
   Pareto: False
-  sym: False
+  sym: True
   chamfer_dis_k2p: False
   diversity_loss_3d1: False
 

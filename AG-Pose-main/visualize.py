@@ -121,7 +121,7 @@ if __name__ == "__main__":
     # model
     ours_model = Net(cfg.pose_net).cuda()
     
-    checkpoint = os.path.join(cfg.ckpt_dir, 'epoch_' + str(cfg.test_epoch) + '.pt')
+    checkpoint = '/workspace/data/results/myresults/epoch_32.pt'
     print("=> loading checkpoint from path: {} ...".format(checkpoint))
     gorilla.solver.load_checkpoint(model=ours_model, filename=checkpoint)
  
