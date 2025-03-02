@@ -1,0 +1,4 @@
+# ninja log v5
+0	43313	1732966485419349306	/workspace/code/AG-Pose-main/model/pointnet2/build/temp.linux-x86_64-cpython-310/src/interpolate_gpu.o	ea330f2c710c54e3
+0	44899	1732966487003348707	/workspace/code/AG-Pose-main/model/pointnet2/build/temp.linux-x86_64-cpython-310/src/ball_query_gpu.o	1eeedc4b5d258421
+0	46086	1732966488191348255	/workspace/code/AG-Pose-main/model/pointnet2/build/temp.linux-x86_64-cpython-310/src/group_points_gpu.o	1ca8d6bba66df101
