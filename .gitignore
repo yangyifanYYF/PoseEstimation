@@ -5,4 +5,9 @@ AG-Pose-main/utils/__pycache__/
 AG-Pose-main/provider/__pycache__/
 AG-Pose-main/__pycache__/
 AG-Pose-main/model/clip-vit-base-patch16/
+MK-Pose/model/__pycache__/
+MK-Pose/utils/__pycache__/
+MK-Pose/provider/__pycache__/
+MK-Pose/__pycache__/
+MK-Pose/model/clip-vit-base-patch16/
 AG-Pose-main0/

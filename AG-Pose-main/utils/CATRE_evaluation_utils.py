@@ -872,6 +872,7 @@ def compute_CATRE_IoU(
             iou_3d_aps[cls_id, s] = compute_ap_from_matches_scores(
                 iou_pred_matches_all[cls_id][s, :], iou_pred_scores_all[cls_id][s, :], iou_gt_matches_all[cls_id][s, :]
             )
+            logger.warning(f'{class_name} on {iou_thres}: {iou_3d_aps[cls_id, s] * 100}')
 
     iou_3d_aps[-1, :] = np.mean(iou_3d_aps[1:-1, :], axis=0)
 
